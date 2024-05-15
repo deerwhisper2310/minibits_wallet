@@ -24,7 +24,7 @@ import {
   Loading,
   BottomModal,
 } from '../components'
-import {WalletStackScreenProps} from '../navigation'
+import {TransactionsStackScreenProps} from '../navigation'
 import {useHeader} from '../utils/useHeader'
 import {useStores} from '../models'
 import {GroupedByTimeAgo, maxTransactionsInModel} from '../models/TransactionsStore'
@@ -34,10 +34,6 @@ import {TransactionListItem} from './Transactions/TransactionListItem'
 import { Transaction, TransactionStatus } from '../models/Transaction'
 import { height } from '@fortawesome/free-solid-svg-icons/faWallet'
 
-
-interface TranHistoryScreenProps
-  extends WalletStackScreenProps<'TranHistory'> {}
-
 if (Platform.OS === 'android' &&
     UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true)
@@ -45,7 +41,7 @@ if (Platform.OS === 'android' &&
 // Number of transactions held in TransactionsStore model
 const limit = maxTransactionsInModel
 
-export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function TranHistoryScreen(_props) {
+export const TranHistoryScreen: FC<TransactionsStackScreenProps<'TranHistory'>> = observer(function TranHistoryScreen(_props) {
     const {navigation} = _props
     const {transactionsStore, proofsStore, mintsStore} = useStores()
     useHeader({
@@ -111,6 +107,7 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
         setIsDeleteModalVisible(previousState => !previousState)
     }
 
+    // TODO debug
     const getTransactionsList = async function () {
         setIsLoading(true)
         try {
@@ -136,7 +133,7 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
     }
 
 
-
+    // TODO debug
     const getPendingTransactionsList = async function () {
         setIsLoading(true)
         try {
@@ -229,7 +226,7 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
     const headerBg = useThemeColor('header')
     const iconColor = useThemeColor('textDim')    
     const activeIconColor = useThemeColor('button')
-    const pendingBalance = proofsStore.getBalances().totalPendingBalance
+    const pendingBalance = proofsStore.getBalances().mintPendingBalances
 
     const sections = showPendingOnly ? Object.keys(transactionsStore.groupedPendingByTimeAgo).map((timeAgo) => ({
         title: timeAgo,
@@ -251,7 +248,21 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
                 ContentComponent={
                     <>
                         <ListItem
-                        text={'Pending balance'}
+                            text={showPendingOnly ? `Showing ${transactionsStore.pending.length} of ${pendingDbCount} pending` : `Showing ${transactionsStore.count} of ${dbCount} total`}
+                            LeftComponent={
+                                <Icon
+                                containerStyle={$iconContainer}
+                                icon="faListUl"
+                                size={spacing.medium}
+                                color={iconColor}
+                                />
+                            }
+                            style={$item}
+                            bottomSeparator={false}
+                            onPress={() => false}
+                        />
+                        <ListItem
+                        text={`${transactionsStore.pending.length} Pending transactions`}
                         LeftComponent={
                             <Icon
                             containerStyle={$iconContainer}
@@ -260,26 +271,9 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
                             color={showPendingOnly ? activeIconColor : iconColor}
                             />
                         }
-                        RightComponent={
-                            <Text style={$txAmount} text={`${pendingBalance}`} />
-                        }
                         style={$item}
                         // bottomSeparator={true}
                         onPress={toggleShowPendingOnly}
-                        />
-                        <ListItem
-                        text={showPendingOnly ? `Showing ${transactionsStore.pending.length} of ${pendingDbCount} pending` : `Showing ${transactionsStore.count} of ${dbCount} total`}
-                        LeftComponent={
-                            <Icon
-                            containerStyle={$iconContainer}
-                            icon="faListUl"
-                            size={spacing.medium}
-                            color={iconColor}
-                            />
-                        }
-                        style={$item}
-                        bottomSeparator={false}
-                        onPress={() => false}
                         />
                     </>
                 }
@@ -292,7 +286,7 @@ export const TranHistoryScreen: FC<TranHistoryScreenProps> = observer(function T
                         <Card
                             ContentComponent={
                                 <>
-                                {data.map((item, index) => (
+                                {data.map((item: Transaction, index: number) => (
                                     <TransactionListItem
                                         key={item.id}
                                         transaction={item as Transaction}
@@ -383,13 +377,13 @@ const $screen: ViewStyle = {
 const $headerContainer: TextStyle = {
     alignItems: 'center',
     paddingBottom: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $headerCollapsed: TextStyle = {
     alignItems: 'center',
     paddingBottom: spacing.medium,
-    height: spacing.screenHeight * 0.07,
+    height: spacing.screenHeight * 0.08,
 }
 
 const $contentContainer: TextStyle = {

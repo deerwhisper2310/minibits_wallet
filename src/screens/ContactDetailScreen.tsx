@@ -1,6 +1,6 @@
 import {observer} from 'mobx-react-lite'
-import React, {FC, useEffect, useRef, useState} from 'react'
-import {ColorValue, Image, Share, TextInput, TextStyle, View, ViewStyle} from 'react-native'
+import React, {FC, useRef, useState} from 'react'
+import {Image, Share, TextInput, TextStyle, View, ViewStyle} from 'react-native'
 import { colors, spacing, useThemeColor} from '../theme'
 import {ContactsStackScreenProps} from '../navigation'
 import {Icon, Screen, Text, Card, BottomModal, Button, InfoModal, ErrorModal, ListItem} from '../components'
@@ -9,22 +9,20 @@ import {useStores} from '../models'
 import AppError, { Err } from '../utils/AppError'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { ContactType } from '../models/Contact'
-import { WalletProfileRecord } from '../models/WalletProfileStore'
-import { MinibitsClient, NostrClient } from '../services'
+import { NostrClient, log } from '../services'
 import { getImageSource } from '../utils/utils'
 import { moderateVerticalScale, verticalScale } from '@gocodingnow/rn-size-matters'
 import { ReceiveOption } from './ReceiveOptionsScreen'
 import { SendOption } from './SendOptionsScreen'
 import { IncomingDataType, IncomingParser } from '../services/incomingParser'
-import { MINIBITS_NIP05_DOMAIN } from '@env'
 
 
 interface ContactDetailScreenProps extends ContactsStackScreenProps<'ContactDetail'> {}
 
 export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
   function ContactScreen({route, navigation}) {
-    const {contact, relays} = route.params
-    const {contactsStore} = useStores()
+    const {contact} = route.params
+    const {contactsStore, userSettingsStore} = useStores()
     const noteInputRef = useRef<TextInput>(null)
 
     useHeader({        
@@ -52,24 +50,26 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
 
     
     const gotoTopup = () => {
+        
         navigation.navigate('WalletNavigator', { 
             screen: 'Topup',
             params: {
-                paymentOption: ReceiveOption.SEND_PAYMENT_REQUEST, 
-                contact, 
-                relays
-            },
+                paymentOption: ReceiveOption.SEND_PAYMENT_REQUEST,
+                contact,
+                unit: userSettingsStore.preferredUnit               
+            },            
         })
     }
 
 
     const gotoSend = () => {
+        log.trace('[gotoSend] start')
         navigation.navigate('WalletNavigator', { 
-            screen: 'Send',
+            screen: 'Send',            
             params: {
-                paymentOption: SendOption.SEND_TOKEN, 
-                contact, 
-                relays
+                paymentOption: SendOption.SEND_TOKEN,
+                contact,
+                unit: userSettingsStore.preferredUnit                
             },
         })
     }
@@ -79,8 +79,11 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
         try {                         
             await IncomingParser.navigateWithIncomingData({
                 type: IncomingDataType.LNURL_ADDRESS,
-                encoded: contact.lud16
-            }, navigation)    
+                encoded: contact.lud16                
+            }, 
+            navigation,
+            userSettingsStore.preferredUnit
+        )    
             
             return          
         } catch (e: any) {
@@ -171,7 +174,8 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
     const addressColor = useThemeColor('textDim')
     const headerBg = useThemeColor('header')    
     const screenBg = useThemeColor('background')
-    const cardBg = useThemeColor('card')
+    const mainButtonColor = useThemeColor('card')
+    const mainButtonIcon = useThemeColor('button')
   
 
     const {type, name, display_name, npub, nip05, picture, about, lud16} = contact
@@ -253,8 +257,8 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
                     <>
                     {lud16 && (
                         <ListItem                                    
-                            text='Lightning address'
-                            subText={lud16}                            
+                            text={lud16}
+                            subText={'Lightning address'}                            
                             leftIcon='faBolt'
                             leftIconColor={colors.palette.orange200}                          
                         />
@@ -264,22 +268,21 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
                                 <Button
                                     text={`Request payment`}
                                     style={{marginLeft: spacing.small, alignSelf: 'center', minHeight: verticalScale(20)}}
-                                    textStyle={{fontSize: moderateVerticalScale(14), lineHeight: verticalScale(14)}}
+                                    textStyle={{fontSize: moderateVerticalScale(14), lineHeight: moderateVerticalScale(16)}}
                                     onPress={gotoTopup}
                                     preset='tertiary'
                                 />
                             }
                             RightComponent={lud16 ? (
                                 <Button
-                                    text={`Pay to address`}
+                                    text={`Pay to this address`}
                                     style={{marginLeft: spacing.small, alignSelf: 'center', minHeight: verticalScale(20)}}
-                                    textStyle={{fontSize: moderateVerticalScale(14), lineHeight: verticalScale(14)}}
+                                    textStyle={{fontSize: moderateVerticalScale(14), lineHeight: moderateVerticalScale(16)}}
                                     onPress={gotoTransfer}
                                     preset='tertiary'
                                 />
                             ) : undefined}
-                            topSeparator={lud16 ? true : false} 
-                            onPress={gotoTransfer}                   
+                            topSeparator={lud16 ? true : false}                             
                         />                        
                     </>
                 }
@@ -293,12 +296,12 @@ export const ContactDetailScreen: FC<ContactDetailScreenProps> = observer(
                         LeftAccessory={() => (
                             <Icon
                             icon='faArrowUp'
-                            color='white'
+                            color={mainButtonIcon}
                             size={spacing.medium}                  
                             />
                         )}
                         onPress={gotoSend} 
-                        style={$buttonSend}                        
+                        style={[{backgroundColor: mainButtonColor}, $buttonSend]}                        
                     />
                 ) : (
                     <Text 
@@ -375,11 +378,11 @@ const $headerContainer: TextStyle = {
     justifyContent: 'space-around',
     alignItems: 'center',
     paddingHorizontal: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {
-    // flex: 1,
+    flex: 1,
     padding: spacing.extraSmall,
     // alignItems: 'center',
 }
@@ -407,19 +410,20 @@ const $noteButton: ViewStyle = {
 
 
 const $bottomContainer: ViewStyle = {
-    position: 'absolute',
+    /* position: 'absolute',
     bottom: 20,
     left: 0,
     right: 0,
     flex: 1,
     justifyContent: 'flex-end',    
-    alignSelf: 'stretch',    
+    alignSelf: 'stretch', */   
 }
 
 const $buttonContainer: ViewStyle = {
-    flexDirection: 'row',
-    alignSelf: 'center',
-    alignItems: 'center',
+    flexDirection: 'row',    
+    marginVertical: spacing.medium,
+    justifyContent: 'center',
+    alignItems: 'center',    
 }
 
 const $qrCodeContainer: ViewStyle = {
@@ -467,10 +471,8 @@ const $buttonScan: ViewStyle = {
 }
 
 const $buttonSend: ViewStyle = {
-  // borderTopLeftRadius: 0,
-  // borderBottomLeftRadius: 0,
-  borderRadius: 30,
-  // borderBottomRightRadius: 30,
-  minWidth: verticalScale(160),  
+  borderRadius: moderateVerticalScale(60 / 2),
+  height: moderateVerticalScale(60),
+  minWidth: verticalScale(140),  
 }
 

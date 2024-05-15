@@ -1,7 +1,7 @@
 import {observer} from 'mobx-react-lite'
 import { Observer } from 'mobx-react-lite'
 import Clipboard from '@react-native-clipboard/clipboard'
-import React, {FC, useCallback, useEffect, useRef, useState} from 'react'
+import React, {FC, useRef, useState} from 'react'
 import {FlatList, TextInput, TextStyle, View, ViewStyle} from 'react-native'
 import {colors, spacing, useThemeColor} from '../theme'
 import {SettingsStackScreenProps} from '../navigation' // @demo remove-current-line
@@ -10,8 +10,8 @@ import {useHeader} from '../utils/useHeader'
 import {useStores} from '../models'
 import { Relay } from '../models/Relay'
 import AppError, { Err } from '../utils/AppError'
-import { log, NostrClient, WalletTask } from '../services'
-import { verticalScale } from '@gocodingnow/rn-size-matters'
+import { log, WalletTask } from '../services'
+import { moderateVerticalScale, verticalScale } from '@gocodingnow/rn-size-matters'
 
 interface SettingsScreenProps extends SettingsStackScreenProps<'Relays'> {}
 
@@ -22,6 +22,8 @@ export const RelaysScreen: FC<SettingsScreenProps> = observer(
     useHeader({
         leftIcon: 'faArrowLeft',
         onLeftPress: () => navigation.goBack(),
+        rightIcon: 'faRotate',
+        onRightPress: () => onConnect()
     })
 
     const newRelayInputRef = useRef<TextInput>(null)
@@ -123,6 +125,10 @@ export const RelaysScreen: FC<SettingsScreenProps> = observer(
     const iconColor = useThemeColor('textDim')
     const headerBg = useThemeColor('header')
     const inputBg = useThemeColor('background')
+    const iconBottom = useThemeColor('button')
+    const mainButtonColor = useThemeColor('card')
+    const screenBg = useThemeColor('background')
+    const mainButtonIcon = useThemeColor('button')
     
     return (
       <Screen contentContainerStyle={$screen} preset='fixed'>
@@ -176,17 +182,18 @@ export const RelaysScreen: FC<SettingsScreenProps> = observer(
         <View style={$bottomContainer}>
             <View style={$buttonContainer}>
                 <Button
-                    tx={'contactsScreen.new'}
                     LeftAccessory={() => (
                         <Icon
-                        icon='faCircleNodes'
-                        color='white'
-                        size={spacing.medium}                  
+                            icon='faPlus'
+                            size={spacing.large}
+                            color={mainButtonIcon}
                         />
                     )}
-                    onPress={gotoAdd}
-                    style={$buttonNew}
-                />                
+                    onPress={gotoAdd}                        
+                    style={[{backgroundColor: mainButtonColor, borderWidth: 1, borderColor: screenBg}, $buttonNew]}
+                    preset='tertiary'
+                    text='Add'
+                />
             </View>
         </View>
         <BottomModal
@@ -270,7 +277,7 @@ const $headerContainer: TextStyle = {
 }
 
 const $contentContainer: TextStyle = {
-  // flex: 1,
+  flex: 1,
   padding: spacing.extraSmall,
   // alignItems: 'center',
 }
@@ -320,23 +327,26 @@ const $rightContainer: ViewStyle = {
 
 const $buttonContainer: ViewStyle = {
     flexDirection: 'row',
-    alignSelf: 'center',
+    marginBottom: spacing.tiny,
+    justifyContent: 'center',
+    alignItems: 'center',    
 }
 
-const $bottomContainer: ViewStyle = {
-    position: 'absolute',
+  const $bottomContainer: ViewStyle = {
+    /*position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     flex: 1,
     justifyContent: 'flex-end',
-    marginBottom: spacing.medium,
-    alignSelf: 'stretch',
+    marginBottom: spacing.medium,*/
+    // alignSelf: 'center',
     // opacity: 0,
   }
   
   const $buttonNew: ViewStyle = {
-    borderRadius: 30,    
-    minWidth: verticalScale(110),    
+    borderRadius: moderateVerticalScale(60 / 2),
+    height: moderateVerticalScale(60),
+    minWidth: verticalScale(120),  
   } 
 

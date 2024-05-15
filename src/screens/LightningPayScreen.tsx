@@ -1,38 +1,36 @@
 import React, {FC, useState, useEffect, useRef} from 'react'
 import {
-    Platform,
-    PermissionsAndroid,
-    Alert,
     ViewStyle,
     View,
     TextStyle,
     TextInput,
 } from 'react-native'
 import {WalletStackScreenProps} from '../navigation'
-import {CameraScreen, CameraType} from 'react-native-camera-kit'
-import {colors, spacing, typography, useThemeColor} from '../theme'
-import {useHeader} from '../utils/useHeader'
+import {colors, spacing, useThemeColor} from '../theme'
 import {log} from '../services/logService'
 import { IncomingDataType, IncomingParser } from '../services/incomingParser'
 import AppError, { Err } from '../utils/AppError'
-import { BottomModal, Button, Card, ErrorModal, Icon, ListItem, ScanIcon, Screen, Text } from '../components'
+import { Button, Card, ErrorModal, Header, Icon, InfoModal, ListItem, ScanIcon, Screen, Text } from '../components'
 import { LnurlUtils } from '../services/lnurl/lnurlUtils'
 import { infoMessage } from '../utils/utils'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { SvgXml } from 'react-native-svg'
 import { SendOption } from './SendOptionsScreen'
+import { CurrencyCode, MintUnit } from '../services/wallet/currency'
+import { useStores } from '../models'
+import { Mint } from '../models/Mint'
+import { MintHeader } from './Mints/MintHeader'
+import { moderateVerticalScale } from '@gocodingnow/rn-size-matters'
+import useIsInternetReachable from '../utils/useIsInternetReachable'
 
 
 export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = function LightningPayScreen(_props) {
-    const {navigation} = _props
-    useHeader({
-        leftIcon: 'faArrowLeft',        
-        onLeftPress: () => navigation.goBack(),
-    })
+    const {navigation, route} = _props
+    const lightningInputRef = useRef<TextInput>(null)
+    const {mintsStore} = useStores()
+    const isInternetReachable = useIsInternetReachable()
 
-    const lightningInputRef = useRef<TextInput>(null)   
-
-    useEffect(() => {
+    /* useEffect(() => {
         const focus = () => {
             lightningInputRef && lightningInputRef.current
             ? lightningInputRef.current.focus()
@@ -42,13 +40,43 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
         return () => {
             clearTimeout(timer)
         }
+    }, []) */
+
+    useEffect(() => {
+        const setUnitAndMint = () => {
+            try {
+                const {unit, mintUrl} = route.params
+                if(!unit) {
+                    throw new AppError(Err.VALIDATION_ERROR, 'Missing mint unit in route params')
+                }
+
+                setUnit(unit)
+
+                if(mintUrl) {
+                    const mint = mintsStore.findByUrl(mintUrl)    
+                    setMint(mint)
+                }
+
+                if(!isInternetReachable) {
+                    setInfo('Your device is currently offline.')
+                }
+            } catch (e: any) {
+                handleError(e)
+            }
+        }
+        
+        setUnitAndMint()
+        return () => {}
     }, [])
 
        
     
     const [prevRouteName, setPrevRouteName] = useState<string>('')
-    const [lightningData, setLightningData] = useState<string | undefined>(undefined)    
+    const [lightningData, setLightningData] = useState<string | undefined>(undefined)
+    const [unit, setUnit] = useState<MintUnit>('sat')
+    const [mint, setMint] = useState<Mint | undefined>(undefined)    
     const [error, setError] = useState<AppError | undefined>()
+    const [info, setInfo] = useState('')
 
 
     const onPaste = async function() {        
@@ -84,7 +112,7 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
 
         try {
             const invoiceResult = IncomingParser.findAndExtract(lightningData as string, IncomingDataType.INVOICE)
-            return IncomingParser.navigateWithIncomingData(invoiceResult, navigation)
+            return IncomingParser.navigateWithIncomingData(invoiceResult, navigation, unit, mint && mint.mintUrl)
             
         } catch (e: any) {
             const maybeLnurlAddress = LnurlUtils.findEncodedLnurlAddress(lightningData as string)
@@ -97,8 +125,8 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
                     if(validAddress) {                            
                         await IncomingParser.navigateWithIncomingData({
                             type: IncomingDataType.LNURL_ADDRESS,
-                            encoded: validAddress
-                        }, navigation)    
+                            encoded: validAddress,
+                        }, navigation, unit, mint && mint.mintUrl)    
                     }
                     return          
                 } catch (e3: any) {
@@ -118,7 +146,7 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
                         await IncomingParser.navigateWithIncomingData({
                             type: IncomingDataType.LNURL,
                             encoded: encodedLnurl
-                        }, navigation)
+                        }, navigation, unit, mint && mint.mintUrl)
                     }
                     return
                 } catch (e2: any) {
@@ -132,6 +160,14 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
             return
         }
     }
+
+
+    const gotoSend = async function () {
+        navigation.navigate('Send', {
+            unit,
+            mintUrl: mint?.mintUrl            
+        })
+    }
     
 
     const handleError = function(e: AppError): void {        
@@ -140,11 +176,20 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
     }
 
     const hintText = useThemeColor('textDim')
+    const scanIcon = useThemeColor('text')    
     const inputBg = useThemeColor('background')
+    const contactIcon = useThemeColor('button')
     const headerBg = useThemeColor('header')
+    
+    
 
     return (
         <Screen preset="fixed" contentContainerStyle={$screen}>
+            <MintHeader 
+                mint={mint}
+                unit={unit!}
+                navigation={navigation}
+            />
             <View style={[$headerContainer, {backgroundColor: headerBg}]}>                
                 <Text
                     preset="heading"
@@ -164,10 +209,10 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
                             RightComponent={
                                 <Button
                                     preset='tertiary'                                    
-                                    LeftAccessory={() => <Icon containerStyle={{paddingVertical: 0}} icon='faAddressBook' />}
+                                    LeftAccessory={() => <Icon color={contactIcon} containerStyle={{paddingVertical: 0}} icon='faAddressBook' />}
                                     onPress={gotoContacts}
                                     text='Contacts'
-                                    textStyle={{fontSize: 12, color: hintText}}
+                                    textStyle={{fontSize: 12, color: contactIcon}}
                                 />
                             }
                         />
@@ -179,60 +224,85 @@ export const LightningPayScreen: FC<WalletStackScreenProps<'LightningPay'>> = fu
                             style={{color: hintText, padding: spacing.extraSmall}} 
                             text='Enter or paste Lightning address, invoice or LNURL pay code you want to pay to.' 
                         />
-                        <View style={{flexDirection: 'row', alignItems: 'center', marginTop: spacing.small}}>
+                        <View style={{alignItems: 'center', marginTop: spacing.small}}>
                             <TextInput
                                 ref={lightningInputRef}
                                 onChangeText={data => setLightningData(data)}
                                 value={lightningData}
                                 autoCapitalize='none'
                                 keyboardType='default'
-                                maxLength={500}                            
+                                maxLength={500}
+                                numberOfLines={4}
+                                multiline={true}                         
                                 selectTextOnFocus={true}
                                 style={[$addressInput, {backgroundColor: inputBg}]}                        
                             />
-                            <Button
-                                preset='secondary'
-                                tx={'common.paste'}       
-                                style={{                                    
-                                    marginLeft: 1,
-                                    borderTopLeftRadius: 0,
-                                    borderBottomLeftRadius: 0,                                
-                                }}
-                                onPress={onPaste}
-                            />
-                        </View>
-                        <View style={$buttonContainer}>
-                            <Button
-                                preset='default'
-                                tx={'common.confirm'}
-                                onPress={onConfirm}
-                                style={{marginLeft: spacing.small}}
-                                LeftAccessory={() => <Icon icon='faCheckCircle'/>}
-                            />
-                            <Button
-                                preset='secondary'
-                                tx={'common.scan'}
-                                onPress={gotoScan}
-                                style={{marginLeft: spacing.small}}
-                                LeftAccessory={() => {
-                                    return(
-                                        <SvgXml 
-                                            width={spacing.medium} 
-                                            height={spacing.medium} 
-                                            xml={ScanIcon}
-                                            fill='white'
-                                            style={{marginHorizontal: spacing.extraSmall}}
-                                        />
-                                    )
-                                }}
-                            />
-                        </View>
+                        </View>                        
+                            {!!lightningData && lightningData?.length > 1 ? (
+                                <View style={$buttonContainer}>
+                                    <Button
+                                        preset='default'
+                                        tx={'common.confirm'}
+                                        onPress={onConfirm}
+                                        style={{marginLeft: spacing.small}}
+                                        LeftAccessory={() => <Icon icon='faCheckCircle' color='white'/>}
+                                    />
+                                </View>
+                            ) : (
+                                <View style={$buttonContainer}>
+                                    <Button
+                                        preset='secondary'
+                                        tx={'common.paste'}       
+                                        onPress={onPaste}
+                                        LeftAccessory={() => (
+                                            <Icon icon='faPaste'/>
+                                        )}
+                                    />
+                                    <Button
+                                        preset='secondary'
+                                        tx={'common.scan'}
+                                        onPress={gotoScan}
+                                        style={{marginLeft: spacing.small}}
+                                        LeftAccessory={() => {
+                                            return(
+                                                <SvgXml 
+                                                    width={spacing.medium} 
+                                                    height={spacing.medium} 
+                                                    xml={ScanIcon}
+                                                    fill={scanIcon}
+                                                    style={{marginHorizontal: spacing.extraSmall}}
+                                                />
+                                            )
+                                        }}
+                                    />
+                                </View>
+                            )}                        
                         </>
                     }
                 />
-                
-            </View>
+                <Button
+                    text={'Send as ecash'}
+                    LeftAccessory={() => (
+                        <Icon
+                        icon='faMoneyBill1'
+                        color={hintText}
+                        size={spacing.large}                  
+                        />
+                    )}
+                    textStyle={{fontSize: 14, color: hintText}}
+                    preset='secondary'
+                    onPress={gotoSend}
+                    style={{
+                        minHeight: moderateVerticalScale(40), 
+                        paddingVertical: moderateVerticalScale(spacing.tiny),
+                        marginRight: spacing.tiny,
+                        alignSelf: 'center',
+                        marginTop: spacing.medium
+                    }}                    
+                />
+            {info && <InfoModal message={info} />}
             {error && <ErrorModal error={error} />}
+            </View>
         </Screen>    
     )
 }
@@ -251,7 +321,7 @@ const $contentContainer: ViewStyle = {
 const $headerContainer: TextStyle = {
     alignItems: 'center',
     padding: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $buttonContainer: ViewStyle = {
@@ -262,13 +332,11 @@ const $buttonContainer: ViewStyle = {
 
 
 const $addressInput: TextStyle = {
-    flex: 1,    
-    borderTopLeftRadius: spacing.extraSmall,
-    borderBottomLeftRadius: spacing.extraSmall,    
-    // fontSize: 16,
-    padding: spacing.extraSmall,
-    paddingRight: 0,    
-    alignSelf: 'stretch',    
+    textAlignVertical: 'top' ,
+    borderRadius: spacing.extraSmall,
+    padding: spacing.extraSmall,        
+    alignSelf: 'stretch',
+    height: 120,
 }
 
 const $bottomContainer: ViewStyle = {

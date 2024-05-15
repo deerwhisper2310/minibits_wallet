@@ -39,18 +39,19 @@ import {
   OwnKeysScreen,
   ReceiveOption,
   SendOption,
+  TokenReceiveScreen,
 } from "../screens"
 import { Contact } from "../models/Contact"
 import { colors, useThemeColor, spacing, typography } from "../theme"
 import { AppStackParamList, AppStackScreenProps } from "./AppNavigator"
-import { MintBalance } from "../models/Mint"
 import { PaymentRequest } from "../models/PaymentRequest"
 import { LNURLPayParams, LNURLWithdrawParams } from "js-lnurl"
-import { IncomingDataType } from "../services/incomingParser"
+import { MintUnit } from "../services/wallet/currency"
 
 
 export type TabsParamList = {
-    WalletNavigator: NavigatorScreenParams<WalletStackParamList>  
+    WalletNavigator: NavigatorScreenParams<WalletStackParamList>
+    TransactionsNavigator: NavigatorScreenParams<TransactionsStackParamList>  
     ContactsNavigator: NavigatorScreenParams<ContactsStackParamList>    
     SettingsNavigator: NavigatorScreenParams<SettingsStackParamList>
 }
@@ -84,14 +85,23 @@ export function TabsNavigator() {
         tabBarInactiveTintColor: textColor as string,
         tabBarLabelStyle: [$tabBarLabel, {color: textColor}],
         tabBarItemStyle: $tabBarItem,        
-      }}
+      }}      
     >
       <Tab.Screen        
         name="WalletNavigator"
         component={WalletNavigator}
         options={{
           tabBarLabel: translate("tabNavigator.walletLabel"),
-          tabBarIcon: ({ focused }) => <Icon icon="faWallet" color={focused ? activeColor : textColor} size={spacing.large} />,      
+          tabBarIcon: ({ focused }) => <Icon icon="faWallet" color={focused ? activeColor : textColor} size={spacing.large} />          
+        }}
+      />
+
+      <Tab.Screen        
+        name="TransactionsNavigator"
+        component={TransactionsNavigator}
+        options={{
+          tabBarLabel: "Transactions",
+          tabBarIcon: ({ focused }) => <Icon icon="faListUl" color={focused ? activeColor : textColor} size={spacing.large} />,      
         }}
       />
 
@@ -109,7 +119,7 @@ export function TabsNavigator() {
         component={SettingsNavigator}
         options={{
           tabBarLabel: translate("tabNavigator.settingsLabel"),
-          tabBarIcon: ({ focused }) => <Icon icon="faSliders" color={focused ? activeColor : textColor} size={spacing.large} />,           
+          tabBarIcon: ({ focused }) => <Icon icon="faGears" color={focused ? activeColor : textColor} size={spacing.large} />,           
         }}
       />
     </Tab.Navigator>
@@ -118,20 +128,45 @@ export function TabsNavigator() {
 
 
 export type WalletStackParamList = {  
-    Wallet: {scannedMintUrl? : string, returnWithNavigationReset?: boolean}
-    ReceiveOptions: undefined
-    Receive: {encodedToken? : string}
-    SendOptions: undefined
-    Send: {contact?: Contact, relays?: string[], paymentOption?: SendOption}
+    Wallet: {scannedMintUrl? : string}
+    ReceiveOptions: {unit: MintUnit} // to be removed
+    TokenReceive: {
+      unit: MintUnit    
+      mintUrl?: string,      
+    }    
+    Receive: {unit: MintUnit, encodedToken? : string}
+    SendOptions: {unit: MintUnit}
+    Send: {
+      unit: MintUnit,
+      paymentOption?: SendOption,
+      contact?: Contact,
+      mintUrl?: string,      
+    }
     Scan: undefined
-    LightningPay: undefined
-    TranDetail: {id: number}
-    TranHistory: undefined
+    LightningPay: {
+      unit: MintUnit    
+      mintUrl?: string,      
+    }    
     PaymentRequests: undefined 
-    Transfer: {encodedInvoice?: string, paymentRequest?: PaymentRequest, lnurlParams?: LNURLPayParams & {address?: string}, paymentOption?: SendOption,}
-    Topup: {contact?: Contact, relays?: string[], paymentOption?: ReceiveOption, lnurlParams?: LNURLWithdrawParams}
-    ContactsNavigator: {screen: string, params: any}
-    SettingsNavigator: {screen: string, params: any}
+    Transfer: {
+      unit: MintUnit,
+      encodedInvoice?: string,
+      paymentRequest?: PaymentRequest, 
+      lnurlParams?: LNURLPayParams & {address?: string}, 
+      paymentOption?: SendOption,
+      mintUrl?: string,      
+    }
+    Topup: {      
+      unit: MintUnit,
+      paymentOption?: ReceiveOption,
+      contact?: Contact,
+      lnurlParams?: LNURLWithdrawParams,
+      mintUrl?: string,      
+    }
+    // TranDetail: {id: number}
+    ContactsNavigator: {screen: string, params: any, initial?: boolean}
+    SettingsNavigator: {screen: string, params: any, initial?: boolean}
+    TransactionsNavigator: {screen: string, params: any, initial?: boolean}
 }
 
 export type WalletStackScreenProps<T extends keyof WalletStackParamList> = StackScreenProps<
@@ -146,24 +181,54 @@ const WalletNavigator = function WalletNavigator() {
   return (
     <WalletStack.Navigator    
         screenOptions={{ 
-                presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
+                // presentation: '', // prevents white glitch on scren change in dark mode
                 headerShown: false,        
         }}
     >        
         <WalletStack.Screen name="Wallet" component={WalletScreen} />
         <WalletStack.Screen name="ReceiveOptions" component={ReceiveOptionsScreen} />
+        <WalletStack.Screen name="TokenReceive" component={TokenReceiveScreen} />
         <WalletStack.Screen name="Receive" component={ReceiveScreen} />
         <WalletStack.Screen name="SendOptions" component={SendOptionsScreen} />
         <WalletStack.Screen name="Send" component={SendScreen} />
         <WalletStack.Screen name="Scan" component={ScanScreen} />
-        <WalletStack.Screen name="LightningPay" component={LightningPayScreen} />
-        <WalletStack.Screen name="TranDetail" component={TranDetailScreen} />
-        <WalletStack.Screen name="TranHistory" component={TranHistoryScreen} />
+        <WalletStack.Screen name="LightningPay" component={LightningPayScreen} />        
         <WalletStack.Screen name="PaymentRequests" component={PaymentRequestsScreen} />
         <WalletStack.Screen name="Transfer" component={TransferScreen} />
         <WalletStack.Screen name="Topup" component={TopupScreen} />
     </WalletStack.Navigator>
   )
+}
+
+
+export type TransactionsStackParamList = {    
+  TranDetail: {id: number}
+  TranHistory: undefined
+  WalletNavigator: {screen: string, params: any}
+  ContactsNavigator: {screen: string, params: any}
+  SettingsNavigator: {screen: string, params: any}
+}
+
+export type TransactionsStackScreenProps<T extends keyof TransactionsStackParamList> = StackScreenProps<
+  TransactionsStackParamList,
+  T
+>
+
+const TransactionsStack = createNativeStackNavigator<TransactionsStackParamList>()
+
+const TransactionsNavigator = function TransactionsNavigator() {  
+
+return (
+  <TransactionsStack.Navigator    
+      screenOptions={{ 
+              // presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
+              headerShown: false,        
+      }}
+  >   
+      <TransactionsStack.Screen name="TranHistory" component={TranHistoryScreen} />
+      <TransactionsStack.Screen name="TranDetail" component={TranDetailScreen}/>            
+  </TransactionsStack.Navigator>
+)
 }
 
 
@@ -174,7 +239,7 @@ export type ContactsStackParamList = {
     WalletName: undefined
     RandomName: {navigation: any}
     OwnName: {navigation: any}
-    ContactDetail: {contact: Contact, relays: string[]}
+    ContactDetail: {contact: Contact}
     OwnKeys: undefined
     WalletNavigator: {screen: string, params: any}
     SettingsNavigator: {screen: string}    
@@ -191,7 +256,7 @@ export type ContactsStackScreenProps<T extends keyof ContactsStackParamList> = S
     return (
       <ContactsStack.Navigator    
         screenOptions={{ 
-          presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
+          // presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
           headerShown: false,        
         }}
       >        
@@ -239,7 +304,7 @@ const SettingsNavigator = function SettingsNavigator() {
   return (
     <SettingsStack.Navigator    
       screenOptions={{ 
-        presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
+        // presentation: 'transparentModal', // prevents white glitch on scren change in dark mode
         headerShown: false,        
       }}
     >        
@@ -270,7 +335,7 @@ const $tabBarItem: ViewStyle = {
 
 const $tabBarLabel: TextStyle = {
   fontSize: 12,
-  fontFamily: typography.primary?.medium,
+  fontFamily: typography.primary?.light,
   lineHeight: 16,
   flex: 1,
 }

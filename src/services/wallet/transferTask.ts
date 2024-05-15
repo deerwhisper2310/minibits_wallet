@@ -1,16 +1,17 @@
 import {CashuUtils} from '../cashu/cashuUtils'
 import AppError, {Err} from '../../utils/AppError'
-import {type Proof as CashuProof} from '@cashu/cashu-ts'
+import {MeltQuoteResponse, type Proof as CashuProof} from '@cashu/cashu-ts'
 import {rootStoreInstance} from '../../models'
 import { TransactionTaskResult, WalletTask } from '../walletService'
 import { MintBalance } from '../../models/Mint'
 import { Proof } from '../../models/Proof'
 import { Transaction, TransactionData, TransactionRecord, TransactionStatus, TransactionType } from '../../models/Transaction'
 import { log } from '../logService'
-import { MintClient, MintKeys } from '../cashuMintClient'
+import { MintClient } from '../cashuMintClient'
 import { WalletUtils } from './utils'
-import isBefore from 'date-fns/isBefore'
+import {isBefore} from 'date-fns'
 import { sendFromMint } from './sendTask'
+import { MintUnit, formatCurrency, getCurrency } from './currency'
 
 const {
     transactionsStore,
@@ -23,26 +24,28 @@ const TRANSFER = 'transferTask'
 export const transferTask = async function (
     mintBalanceToTransferFrom: MintBalance,
     amountToTransfer: number,
-    estimatedFee: number,
-    invoiceExpiry: Date,
+    unit: MintUnit,
+    meltQuote: MeltQuoteResponse,
     memo: string,
+    invoiceExpiry: Date,    
     encodedInvoice: string,
 )  : Promise<TransactionTaskResult> {
-    const mintUrl = mintBalanceToTransferFrom.mint
+    const mintUrl = mintBalanceToTransferFrom.mintUrl
     const mintInstance = mintsStore.findByUrl(mintUrl)
 
     log.debug('[transfer]', 'mintBalanceToTransferFrom', mintBalanceToTransferFrom)
     log.debug('[transfer]', 'amountToTransfer', amountToTransfer)
-    log.debug('[transfer]', 'estimatedFee', estimatedFee)
+    log.debug('[transfer]', 'meltQuote', meltQuote)
 
     // create draft transaction
     const transactionData: TransactionData[] = [
         {
             status: TransactionStatus.DRAFT,
             mintBalanceToTransferFrom,
-            encodedInvoice,
             amountToTransfer,
-            estimatedFee,
+            unit,
+            meltQuote,
+            encodedInvoice,            
             createdAt: new Date(),
         }
     ]
@@ -51,7 +54,7 @@ export const transferTask = async function (
     let proofsToPay: CashuProof[] = []
 
     try {
-        if (amountToTransfer + estimatedFee > mintBalanceToTransferFrom.balance) {
+        if (amountToTransfer + meltQuote.fee_reserve > mintBalanceToTransferFrom.balances[unit]!) {
             throw new AppError(Err.VALIDATION_ERROR, 'Mint balance is insufficient to cover the amount to transfer with expected Lightning fees.')
         }
     
@@ -69,10 +72,11 @@ export const transferTask = async function (
         const newTransaction: Transaction = {
             type: TransactionType.TRANSFER,
             amount: amountToTransfer,
-            fee: estimatedFee,
+            fee: meltQuote.fee_reserve,
+            unit,
             data: JSON.stringify(transactionData),
             memo,
-            mint: mintBalanceToTransferFrom.mint,
+            mint: mintBalanceToTransferFrom.mintUrl,
             status: TransactionStatus.DRAFT,
         }
 
@@ -85,7 +89,8 @@ export const transferTask = async function (
         // get proofs ready to be paid to the mint
         proofsToPay = await sendFromMint(
             mintBalanceToTransferFrom,
-            amountToTransfer + estimatedFee,
+            amountToTransfer + meltQuote.fee_reserve,
+            unit,
             [],
             transactionId,
         )
@@ -108,53 +113,21 @@ export const transferTask = async function (
         // we do not know how much we will get so use big enough constant to increase and lock
         const countOfInFlightProofs = 10
         // temp increase the counter + acquire lock and set inFlight values                        
-        await WalletUtils.lockAndSetInFlight(mintInstance, countOfInFlightProofs, transactionId)
+        await WalletUtils.lockAndSetInFlight(mintInstance, unit, countOfInFlightProofs, transactionId)
 
         // get locked counter values
-        const lockedProofsCounter = mintInstance.getOrCreateProofsCounter?.() 
-        
-        let paymentResult: {feeSavedProofs: CashuProof[], isPaid: boolean, preimage: string | null, newKeys?: MintKeys} = {
-            feeSavedProofs: [],
-            isPaid: false,
-            preimage: null,
-            newKeys: undefined
-        }
+        const lockedProofsCounter = await mintInstance.getProofsCounterByUnit?.(unit)
 
-        try {
-            paymentResult = await MintClient.payLightningInvoice(
-                mintUrl,
-                encodedInvoice,
-                proofsToPay,
-                estimatedFee,
-                lockedProofsCounter.inFlightFrom as number
-            )    
-        } catch (e: any) {
-            if (e instanceof AppError && 
-                e.params && 
-                e.params.message?.includes('outputs have already been signed before')) {
+        const {isPaid, feeSavedProofs} = await MintClient.payLightningMelt(
+            mintUrl,
+            unit,
+            meltQuote,
+            proofsToPay,            
+            lockedProofsCounter.inFlightFrom as number
+        )    
 
-                    log.error('[transfer] Emergency increase of proofsCounter and retrying the send')
-
-                    mintInstance.increaseProofsCounter(20)
-                    paymentResult = await MintClient.payLightningInvoice(
-                        mintUrl,
-                        encodedInvoice,
-                        proofsToPay,
-                        estimatedFee,
-                        lockedProofsCounter.inFlightFrom as number + 20 
-                    )
-                    
-                    log.error('[transfer] Emergency increase of proofsCounter, payLightningInvoice retry result', {paymentResult})
-            } else {
-                throw e
-            }
-        }
-
-        mintInstance.decreaseProofsCounter(countOfInFlightProofs) 
-        
-        const {newKeys, isPaid, feeSavedProofs} = paymentResult
-        if (newKeys) {WalletUtils.updateMintKeys(mintUrl, newKeys)}
-
+        mintInstance.decreaseProofsCounter(lockedProofsCounter.keyset, countOfInFlightProofs) 
+                
         // We've sent the proofsToPay to the mint, so we remove those pending proofs from model storage.
         // Hopefully mint gets important shit done synchronously.        
         await WalletTask.handleSpentByMint({mintUrl, isPending: true})
@@ -176,9 +149,6 @@ export const transferTask = async function (
                     TransactionStatus.PENDING,
                     JSON.stringify(transactionData),
                 )
-                
-                // There is not clear way to get refund for saved fees later so we treat estimated fees as final
-                await transactionsStore.updateFee(transactionId, estimatedFee)
 
                 return {
                     taskFunction: TRANSFER,
@@ -202,23 +172,28 @@ export const transferTask = async function (
                     taskFunction: TRANSFER,
                     mintUrl,
                     transaction: revertedTransaction,
-                    message: 'Payment of lightning invoice failed. Coins were returned to your wallet.',
+                    message: 'Payment of lightning invoice failed. Reserved ecash was returned to your wallet.',
                 } as TransactionTaskResult
             }            
         }
 
         // If real fees were less then estimated, cash the returned savings.
-        let finalFee = estimatedFee
+        let finalFee = meltQuote.fee_reserve
 
         if (feeSavedProofs.length) {
             
             const {addedAmount: feeSaved} = WalletUtils.addCashuProofs(
-                feeSavedProofs, 
                 mintUrl, 
-                transactionId                
+                feeSavedProofs, 
+                {
+                    unit,
+                    transactionId,
+                    isPending: false
+                }
+                
             )
             
-            finalFee = estimatedFee - feeSaved            
+            finalFee = meltQuote.fee_reserve - feeSaved            
         }
 
         // release lock
@@ -241,7 +216,7 @@ export const transferTask = async function (
             JSON.stringify(transactionData),
         )
 
-        const balanceAfter = proofsStore.getBalances().totalBalance
+        const balanceAfter = proofsStore.getUnitBalance(unit)?.unitBalance!
 
         await transactionsStore.updateBalanceAfter(transactionId, balanceAfter)       
 
@@ -249,7 +224,7 @@ export const transferTask = async function (
             taskFunction: TRANSFER,
             mintUrl,
             transaction: completedTransaction,
-            message: `Lightning invoice has been successfully paid and settled with your Minibits ecash. Final network fee has been ${finalFee} SATS.`,
+            message: `Lightning invoice has been successfully paid and settled with your Minibits ecash. Final network fee has been ${formatCurrency(finalFee, getCurrency(unit).code)} ${getCurrency(unit).code}.`,
             finalFee,
         } as TransactionTaskResult
     } catch (e: any) {        
@@ -286,9 +261,6 @@ export const transferTask = async function (
                         TransactionStatus.PENDING,
                         JSON.stringify(transactionData),
                     )
-                    
-                    // There is not clear way to get refund for saved fees later so we treat estimated fees as final
-                    await transactionsStore.updateFee(transactionId, estimatedFee)
 
                     return {
                         taskFunction: TRANSFER,

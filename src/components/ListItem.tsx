@@ -100,6 +100,11 @@ export interface ListItemProps extends TouchableOpacityProps {
    * Overrides `leftIcon`.
    */
   LeftComponent?: ReactElement
+  /**
+   * Bottom ReactElement.
+   * 
+   */
+  BottomComponent?: ReactElement
 }
 
 interface ListItemActionProps {
@@ -134,6 +139,7 @@ export function ListItem(props: ListItemProps) {
     rightIconColor = useThemeColor('textDim'),
     rightIconTransform,
     rightIconInverse = false,
+    BottomComponent,
     style,
     text,
     subText,
@@ -174,20 +180,28 @@ export function ListItem(props: ListItemProps) {
           iconInverse={leftIconInverse}
           Component={LeftComponent}          
         />
+        <View style={$subTextContainer}>
+          <>
         {(subText || subTx) ? (
-          <View style={$subTextContainer}>
-            <Text {...TextProps} tx={tx} text={text} txOptions={txOptions} style={[$textStyles, {alignSelf: 'flex-start'}]}>
+          <>
+            <Text {...TextProps} tx={tx} text={text} txOptions={txOptions} style={$textStyles}>
               {children}
             </Text>
             <Text {...TextProps} size="xs" tx={subTx} text={subText} txOptions={txOptions} style={[$subTextStyles, {color: subTextColor}]}>              
             </Text>
-          </View>
+          </>
         ) : (
           <Text {...TextProps} tx={tx} text={text} txOptions={txOptions} style={$textStyles}>
             {children}
-          </Text>    
+          </Text>  
         )}
-        
+        {(BottomComponent) && (
+          <View style={$bottomComponentContainer}>
+            {BottomComponent}
+          </View>
+        )} 
+        </> 
+        </View>
         <ListItemAction
           side="right"
           size={height}
@@ -242,13 +256,15 @@ const $separatorBottom: ViewStyle = {
 }
 
 const $textStyle: TextStyle = {
+  // alignSelf: 'flex-start',
   paddingVertical: spacing.extraSmall,
-  alignSelf: "center",
+  // alignSelf: "center",
+  textAlignVertical: 'center',
   flexGrow: 1,
   flexShrink: 1,
 }
 
-const $subTextContainer: TextStyle = {  
+const $subTextContainer: ViewStyle = {  
   flex: 1,
   flexDirection: 'column',  
   // borderColor: 'red',
@@ -269,6 +285,12 @@ const $touchableStyle: ViewStyle = {
 const $componentContainer: ViewStyle = {
     flex: 0,
     alignSelf: 'center',      
+}
+
+const $bottomComponentContainer: ViewStyle = {
+  flex: 0,
+  flexDirection: 'row',
+  paddingBottom: spacing.extraSmall,
 }
 
 const $iconContainer: ViewStyle = {

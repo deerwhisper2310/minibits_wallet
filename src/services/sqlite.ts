@@ -16,11 +16,10 @@ import {log} from './logService'
 import {LogLevel} from './log/logTypes'
 import {BackupProof} from '../models/Proof'
 import { CashuUtils } from './cashu/cashuUtils'
-import { Contact, ContactType } from '../models/Contact'
 
 let _db: QuickSQLiteConnection
 
-const _dbVersion = 8 // Update this if db changes require migrations
+const _dbVersion = 10 // Update this if db changes require migrations
 
 const getInstance = function () {
   if (!_db) {
@@ -54,6 +53,7 @@ const _createOrUpdateSchema = function (db: QuickSQLiteConnection) {
         id INTEGER PRIMARY KEY NOT NULL,
         type TEXT,
         amount INTEGER,
+        unit TEXT,
         fee INTEGER,
         data TEXT,
         sentFrom TEXT,
@@ -70,7 +70,8 @@ const _createOrUpdateSchema = function (db: QuickSQLiteConnection) {
     [
         `CREATE TABLE IF NOT EXISTS usersettings (
         id INTEGER PRIMARY KEY NOT NULL,      
-        walletId TEXT,      
+        walletId TEXT,
+        preferredUnit TEXT,    
         isOnboarded BOOLEAN,
         isStorageEncrypted BOOLEAN,
         isLocalBackupOn BOOLEAN,
@@ -86,7 +87,8 @@ const _createOrUpdateSchema = function (db: QuickSQLiteConnection) {
         id TEXT NOT NULL,
         amount INTEGER NOT NULL,
         secret TEXT PRIMARY KEY NOT NULL,
-        C TEXT NOT NULL,     
+        C TEXT NOT NULL,
+        unit TEXT,
         tId INTEGER,
         isPending BOOLEAN,
         isSpent BOOLEAN,
@@ -136,9 +138,12 @@ const _runMigrations = function (db: QuickSQLiteConnection) {
     let migrationQueries: SQLBatchTuple[] = []
 
     // Database migrations sequence based on local version numbers
-    const walletId = _generateWalletId()
+    
 
     if (currentVersion < 3) {
+      
+        const walletId = _generateWalletId()
+
         migrationQueries.push([
             `ALTER TABLE usersettings
             ADD COLUMN walletId TEXT`,       
@@ -202,12 +207,39 @@ const _runMigrations = function (db: QuickSQLiteConnection) {
         log.info(`Prepared database migrations from ${currentVersion} -> 8`)
     }
 
-  // Update db version as a part of migration sqls
-  migrationQueries.push([
-    `INSERT OR REPLACE INTO dbversion (id, version, createdAt)
-     VALUES (?, ?, ?)`,
-    [1, _dbVersion, now.toISOString()],
-  ])
+    if (currentVersion < 9) {
+      migrationQueries.push([
+          `ALTER TABLE transactions
+          ADD COLUMN unit TEXT`,       
+      ], [
+        `ALTER TABLE proofs
+        ADD COLUMN unit TEXT`,
+      ],[
+        `ALTER TABLE usersettings
+        ADD COLUMN preferredUnit TEXT`,
+      ])
+
+      log.info(`Prepared database migrations from ${currentVersion} -> 9`)
+    }
+
+    if (currentVersion < 10) {
+      migrationQueries.push([
+          `UPDATE transactions
+          SET unit = ?`, ['sat']     
+      ], [
+          `UPDATE proofs
+          SET unit = ?`, ['sat']     
+      ])
+
+      log.info(`Prepared database migrations from ${currentVersion} -> 10`)
+    }
+
+    // Update db version as a part of migration sqls
+    migrationQueries.push([
+      `INSERT OR REPLACE INTO dbversion (id, version, createdAt)
+      VALUES (?, ?, ?)`,
+      [1, _dbVersion, now.toISOString()],
+    ])
 
   try {
     const {rowsAffected} = db.executeBatch(migrationQueries)
@@ -318,7 +350,8 @@ const getUserSettings = function (): UserSettings {
         if (!rows?.item(0)) {
             const walletId = _generateWalletId()
             const defaultSettings = updateUserSettings({
-                walletId,                                
+                walletId,
+                preferredUnit: 'sat',                              
                 isOnboarded: 0,
                 isStorageEncrypted: 0,
                 isLocalBackupOn: 1,
@@ -344,15 +377,26 @@ const getUserSettings = function (): UserSettings {
 const updateUserSettings = function (settings: UserSettings): UserSettings {
     try {
         const now = new Date()
-        const {walletId, isOnboarded, isStorageEncrypted, isLocalBackupOn, isTorDaemonOn, isLoggerOn, isStorageMigrated, logLevel} = settings
+        const {
+          walletId,
+          preferredUnit,
+          isOnboarded, 
+          isStorageEncrypted, 
+          isLocalBackupOn, 
+          isTorDaemonOn, 
+          isLoggerOn, 
+          isStorageMigrated, 
+          logLevel
+        } = settings
 
         const query = `
-        INSERT OR REPLACE INTO usersettings (id, walletId, isOnboarded, isStorageEncrypted, isLocalBackupOn, isTorDaemonOn, isLoggerOn, isStorageMigrated, logLevel, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)      
+        INSERT OR REPLACE INTO usersettings (id, walletId, preferredUnit, isOnboarded, isStorageEncrypted, isLocalBackupOn, isTorDaemonOn, isLoggerOn, isStorageMigrated, logLevel, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)      
         `
         const params = [
             1,
-            walletId,                        
+            walletId,
+            preferredUnit,                        
             isOnboarded,
             isStorageEncrypted,
             isLocalBackupOn,
@@ -429,14 +473,14 @@ const getTransactionById = function (id: number) {
 
 const addTransactionAsync = async function (tx: Transaction) {
   try {
-    const {type, amount, data, memo, mint, status} = tx
+    const {type, amount, fee, unit, data, memo, mint, status} = tx
     const now = new Date()
 
     const query = `
-      INSERT INTO transactions (type, amount, data, memo, mint, status, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (type, amount, fee, unit, data, memo, mint, status, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-    const params = [type, amount, data, memo, mint, status, now.toISOString()]
+    const params = [type, amount, fee, unit, data, memo, mint, status, now.toISOString()]
 
     const db = getInstance()
     const result = await db.executeAsync(query, params)
@@ -567,6 +611,7 @@ const updateBalanceAfterAsync = async function (
   }
 }
 
+
 const updateFeeAsync = async function (id: number, fee: number) {
   try {
     const query = `
@@ -592,6 +637,7 @@ const updateFeeAsync = async function (id: number, fee: number) {
     )
   }
 }
+
 
 const updateReceivedAmountAsync = async function (id: number, amount: number) {
   try {
@@ -860,14 +906,15 @@ const addOrUpdateProofs = function (
 
     for (const proof of proofs) {
       insertQueries.push([
-        ` INSERT OR REPLACE INTO proofs (id, amount, secret, C, tId, isPending, isSpent, updatedAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ` INSERT OR REPLACE INTO proofs (id, amount, secret, C, unit, tId, isPending, isSpent, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           proof.id,
           proof.amount,
           proof.secret,
           proof.C,
+          proof.unit,
           proof.tId,
           isPending,
           isSpent,
@@ -875,6 +922,8 @@ const addOrUpdateProofs = function (
         ],
       ])
     }
+
+    // log.trace('[addOrUpdateProofs]', {insertQueries})
 
     // Execute the batch of SQL statements
     const db = getInstance()
@@ -1005,6 +1054,27 @@ const getProofsByTransaction = function (transactionId: number): BackupProof[] {
   }
 }
 
+
+const updateProofsToDefaultUnit = async function () {
+  try {   
+
+    const query = `
+      UPDATE proofs
+      SET unit = ?
+      WHERE unit IS NULL OR unit = ''     
+    `
+    const params = ['sat']
+
+    const _db = getInstance()
+    const result = await _db.executeAsync(query, params)
+
+    log.info('[migrateProofsToDefaultUnit] executed in the database', {result})
+
+  } catch (e: any) {
+    throw new AppError(Err.DATABASE_ERROR, 'Could not migrateProofsToDefaultUnit  in database', e.message)
+  }
+}
+
 export const Database = {
   getInstance,
   getDatabaseVersion,
@@ -1031,4 +1101,5 @@ export const Database = {
   getProofById,
   getProofs,
   getProofsByTransaction,
+  updateProofsToDefaultUnit
 }

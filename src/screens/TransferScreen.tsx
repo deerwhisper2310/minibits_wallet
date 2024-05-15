@@ -10,7 +10,6 @@ import {
   FlatList,
   TextInput,
 } from 'react-native'
-import QuickCrypto from 'react-native-quick-crypto'
 import {spacing, useThemeColor, colors, typography} from '../theme'
 import {WalletStackScreenProps} from '../navigation'
 import {
@@ -28,7 +27,6 @@ import {
 import {Mint} from '../models/Mint'
 import {Transaction, TransactionStatus} from '../models/Transaction'
 import {useStores} from '../models'
-import {useHeader} from '../utils/useHeader'
 import {MintClient, TransactionTaskResult, WalletTask} from '../services'
 import EventEmitter from '../utils/eventEmitter'
 import {log} from '../services/logService'
@@ -36,17 +34,23 @@ import AppError, {Err} from '../utils/AppError'
 import {MintBalance} from '../models/Mint'
 import {MintListItem} from './Mints/MintListItem'
 import {ResultModalInfo} from './Wallet/ResultModalInfo'
-import addSeconds from 'date-fns/addSeconds'
+import {addSeconds} from 'date-fns'
 import { PaymentRequestStatus } from '../models/PaymentRequest'
 import { infoMessage } from '../utils/utils'
 import { DecodedLightningInvoice, LightningUtils } from '../services/lightning/lightningUtils'
 import { SendOption } from './SendOptionsScreen'
-import { roundDown, roundUp } from '../utils/number'
+import { round, roundDown, roundUp, toNumber } from '../utils/number'
 import { LnurlClient, LNURLPayParams } from '../services/lnurlService'
-import { moderateScale, moderateVerticalScale, scale, verticalScale } from '@gocodingnow/rn-size-matters'
-import { CurrencyCode, CurrencySign } from './Wallet/CurrencySign'
+import { moderateVerticalScale } from '@gocodingnow/rn-size-matters'
+import { Currencies, CurrencyCode, MintUnit, getCurrency } from "../services/wallet/currency"
 import { FeeBadge } from './Wallet/FeeBadge'
-import { isObj } from '@cashu/cashu-ts/src/utils'
+import { MeltQuoteResponse } from '@cashu/cashu-ts'
+import { MintHeader } from './Mints/MintHeader'
+import { MintBalanceSelector } from './Mints/MintBalanceSelector'
+import numbro from 'numbro'
+import { TranItem } from './TranDetailScreen'
+import useIsInternetReachable from '../utils/useIsInternetReachable'
+
 
 if (
   Platform.OS === 'android' &&
@@ -58,30 +62,27 @@ if (
 export const TransferScreen: FC<WalletStackScreenProps<'Transfer'>> = observer(
   function TransferScreen({route, navigation}) {
 
-  useHeader({
-    leftIcon: 'faArrowLeft',
-      onLeftPress: () => navigation.goBack(),
-    })
-
     const amountInputRef = useRef<TextInput>(null)
     const {proofsStore, mintsStore, paymentRequestsStore, transactionsStore} = useStores()
+
+    const isInternetReachable = useIsInternetReachable()
 
     const [encodedInvoice, setEncodedInvoice] = useState<string>('')
     const [invoice, setInvoice] = useState<DecodedLightningInvoice | undefined>()
     const [amountToTransfer, setAmountToTransfer] = useState<string>('0')
+    const [unit, setUnit] = useState<MintUnit>('sat')
     const [invoiceExpiry, setInvoiceExpiry] = useState<Date | undefined>()
     const [paymentHash, setPaymentHash] = useState<string | undefined>()
     const [lnurlPayParams, setLnurlPayParams] = useState<LNURLPayParams & {address?: string} | undefined>()
     const [isWaitingForFees, setIsWaitingForFees] = useState<boolean>(false)
-    const [estimatedFee, setEstimatedFee] = useState<number>(0)
+    const [meltQuote, setMeltQuote] = useState<MeltQuoteResponse | undefined>()
     const [finalFee, setFinalFee] = useState<number>(0)
     const [memo, setMemo] = useState('')
     const [lnurlDescription, setLnurlDescription] = useState('')
     const [availableMintBalances, setAvailableMintBalances] = useState<MintBalance[]>([])
     const [mintBalanceToTransferFrom, setMintBalanceToTransferFrom] = useState<MintBalance | undefined>()
-    const [transactionStatus, setTransactionStatus] = useState<
-      TransactionStatus | undefined
-    >()
+    const [transactionStatus, setTransactionStatus] = useState<TransactionStatus | undefined>()
+    const [transaction, setTransaction] = useState<Transaction | undefined>()
     const [info, setInfo] = useState('')
     const [error, setError] = useState<AppError | undefined>()
     const [isLoading, setIsLoading] = useState(false)
@@ -109,9 +110,35 @@ useEffect(() => {
 }, [])
 
 
+
+useEffect(() => {
+    const setUnitAndMint = () => {
+        try {
+            const {unit, mintUrl} = route.params
+            if(!unit) {
+                throw new AppError(Err.VALIDATION_ERROR, 'Missing mint unit in route params')
+            }
+
+            setUnit(unit)
+
+            if(mintUrl) {
+                const mintBalance = proofsStore.getMintBalance(mintUrl)    
+                setMintBalanceToTransferFrom(mintBalance)
+            }
+        } catch (e: any) {
+            handleError(e)
+        }
+    }
+    
+    setUnitAndMint()
+    return () => {}
+}, [])
+
+
 useFocusEffect(
     useCallback(() => {
-        const { paymentOption } = route.params
+        const {paymentOption} = route.params
+        log.trace('[useFocusEffect]', {paymentOption})
 
         const handleInvoice = () => {
             try {
@@ -121,7 +148,7 @@ useFocusEffect(
                     throw new AppError(Err.VALIDATION_ERROR, 'Missing invoice.')
                 }
 
-                log.trace('Invoice', encodedInvoice, 'useFocusEffect')        
+                log.trace('[handleInvoice] Invoice', {encodedInvoice})        
                 
                 onEncodedInvoice(encodedInvoice)
             } catch (e: any) {
@@ -137,7 +164,7 @@ useFocusEffect(
                     throw new AppError(Err.VALIDATION_ERROR, 'Missing paymentRequest.')
                 }
 
-                log.trace('Payment request', paymentRequest, 'useFocusEffect')
+                log.trace('[handlePaymentRequest] Payment request', {paymentRequest})
         
                 const {encodedInvoice, description, paymentHash} = paymentRequest       
         
@@ -188,7 +215,9 @@ useFocusEffect(
 
                 const amountSats = roundUp(lnurlParams.minSendable / 1000, 0)
 
-                setAmountToTransfer(`${amountSats}`)        
+                log.trace('[handleLnurlPay]', {lnurlParams})
+
+                setAmountToTransfer(`${numbro(amountSats).format({thousandSeparated: true, mantissa: 0})}`)        
                 setLnurlPayParams(lnurlParams)                
             } catch (e: any) {
                 handleError(e)
@@ -202,6 +231,12 @@ useFocusEffect(
                 if (!encodedInvoice) {                    
                     throw new AppError(Err.VALIDATION_ERROR, 'Missing donation invoice.')
                 }
+
+                if(unit !== 'sat') {
+                    throw new AppError(Err.VALIDATION_ERROR, `Donations can currently be paid only with ${CurrencyCode.SATS} balances.`)
+                }
+
+                log.trace('[handleDonation]', {encodedInvoice})
                 
                 setIsInvoiceDonation(true)
                 onEncodedInvoice(encodedInvoice)
@@ -232,42 +267,52 @@ useFocusEffect(
 
 
 useEffect(() => {
-    const getEstimatedFee = async function () {
+    const getMeltQuote = async function () {
         try {
-            log.trace('[getEstimatedFee]', 'mintBalanceToTransferFrom', mintBalanceToTransferFrom)  
-            if (!mintBalanceToTransferFrom || !encodedInvoice) {
+            log.trace('[getEstimatedFee]', {mintBalanceToTransferFrom})  
+            if (!mintBalanceToTransferFrom || !mintBalanceToTransferFrom.balances[unit] || !encodedInvoice) {
+                log.trace('[getEstimatedFee]', 'Not ready... exiting')  
                 return
-            }            
+            }           
+            
             setIsLoading(true)
-            const fee = await MintClient.getLightningFee(
-                mintBalanceToTransferFrom.mint,
+            const meltQuote = await MintClient.getLightningMeltQuote(
+                mintBalanceToTransferFrom.mintUrl,
+                unit,
                 encodedInvoice,
             )
-            setIsLoading(false)
             
-            if (parseInt(amountToTransfer) + fee > mintBalanceToTransferFrom.balance) {
-                setInfo(
-                    'There are not enough funds to cover expected lightning network fee. Try selecting another mint with a higher balance.',
-                )
+            setIsLoading(false)
+            setMeltQuote(meltQuote)
+            setAmountToTransfer(`${numbro(meltQuote.amount / getCurrency(unit).precision).format({thousandSeparated: true, mantissa: getCurrency(unit).mantissa})}`)
+    
+            const totalAmount = meltQuote.amount + meltQuote.fee_reserve
+    
+            let availableBalances = proofsStore.getMintBalancesWithEnoughBalance(totalAmount, unit)
+    
+            if (availableBalances.length === 0) {
+                infoMessage(`There is not enough balance in ${getCurrency(unit).code} to pay the invoice amount and expected fees: ${amountToTransfer} ${getCurrency(unit).code}`)
+                return
             }
-
-            setEstimatedFee(fee)
+            
+            setAvailableMintBalances(availableBalances)
+            
         } catch (e: any) { 
             handleError(e)
         }
     }
-    getEstimatedFee()
+
+    getMeltQuote()
+
 }, [mintBalanceToTransferFrom])
 
 
 useEffect(() => {
     const handleTransferTaskResult = async (result: TransactionTaskResult) => {
-        log.trace('handleTransferTaskResult event handler triggered')
+        log.trace('handleTransferTaskResult event handler triggered', {isInvoiceDonation})
         
         setIsLoading(false)
-        const {transaction, message, error, finalFee} = result
-
-        log.trace('[transfer]', 'Transfer result', {transaction, message, error, finalFee})
+        const {transaction, message, error, finalFee} = result        
 
         // handle errors before transaction is created
         if (!transaction && error) {    
@@ -284,6 +329,7 @@ useEffect(() => {
         
         const { status } = transaction as Transaction
         setTransactionStatus(status)
+        setTransaction(transaction)
     
         if(transaction && lnurlPayParams && lnurlPayParams.address) {
             await transactionsStore.updateSentTo( // set ln address to send to to the tx, could be elsewhere //
@@ -307,7 +353,7 @@ useEffect(() => {
             }        
     
         } else {
-            if(!isInvoiceDonation) {  // Donation polling triggers own ResultModal on paid invoice
+            if(!isInvoiceDonation) {  // Donation has own polling to avoid paying with test ecash and triggers own ResultModal on paid invoice
                 setResultModalInfo({
                     status,
                     message,
@@ -333,10 +379,10 @@ useEffect(() => {
         }
     }
 
-    // Subscribe to the 'sendCompleted' event
+    // Subscribe to the task result event
     EventEmitter.on('ev_transferTask_result', handleTransferTaskResult)        
 
-    // Unsubscribe from the 'sendCompleted' event on component unmount
+    // Unsubscribe from the task result event on component unmount
     return () => {
         EventEmitter.off('ev_transferTask_result', handleTransferTaskResult)        
     }
@@ -349,7 +395,7 @@ const resetState = function () {
     setInvoice(undefined)      
     setAmountToTransfer('')
     setInvoiceExpiry(undefined)
-    setEstimatedFee(0)
+    setMeltQuote(undefined)
     setMemo('')
     setAvailableMintBalances([])
     setMintBalanceToTransferFrom(undefined)    
@@ -364,7 +410,6 @@ const resetState = function () {
     setResultModalInfo(undefined)
 }
 
-const togglePasteInvoiceModal = () => setIsPasteInvoiceModalVisible(previousState => !previousState)
 const toggleResultModal = () => setIsResultModalVisible(previousState => !previousState)
 
 const onMintBalanceSelect = function (balance: MintBalance) {
@@ -374,7 +419,9 @@ const onMintBalanceSelect = function (balance: MintBalance) {
 // Amount is editable only in case of LNURL Pay, while invoice is not yet retrieved
 const onAmountEndEditing = async function () {
     try {
-        const amount = parseInt(amountToTransfer)
+        const precision = getCurrency(unit).precision
+        const mantissa = getCurrency(unit).mantissa
+        const amount = round(toNumber(amountToTransfer) * precision, 0)
 
         if (!amount || amount === 0) {
             infoMessage('Amount should be positive number.')          
@@ -386,18 +433,20 @@ const onAmountEndEditing = async function () {
         }
 
         if (lnurlPayParams.minSendable && amount < lnurlPayParams.minSendable / 1000 ) {
-            infoMessage(`Minimal amount to pay is ${lnurlPayParams.minSendable / 1000} SATS.`)          
+            infoMessage(`Minimal amount to pay is ${roundUp(lnurlPayParams.minSendable / 1000, 0)} ${CurrencyCode.SATS}.`)          
             return
         }
 
         if (lnurlPayParams.maxSendable && amount > lnurlPayParams.maxSendable / 1000 ) {
-            infoMessage(`Maximal amount to pay is ${lnurlPayParams.maxSendable / 1000} SATS.`)          
+            infoMessage(`Maximal amount to pay is ${roundDown(lnurlPayParams.maxSendable / 1000, 0)} ${CurrencyCode.SATS}.`)          
             return
         }
 
         if (lnurlPayParams.payerData) {
             infoMessage(`Minibits does not yet support entering of payer identity data (LUD18).`)   
-        }
+        }        
+            
+        setAmountToTransfer(`${numbro(amountToTransfer).format({thousandSeparated: true, mantissa: getCurrency(unit).mantissa})}`)
 
         setIsLoading(true)
         const encoded = await LnurlClient.getInvoice(lnurlPayParams, amount * 1000)
@@ -420,35 +469,27 @@ const onEncodedInvoice = async function (encoded: string, paymentRequestDesc: st
         navigation.setParams({encodedInvoice: undefined})
         navigation.setParams({paymentRequest: undefined})
         navigation.setParams({lnurlParams: undefined})
-        navigation.setParams({paymentOption: undefined})
-
-        setEncodedInvoice(encoded)        
+        navigation.setParams({paymentOption: undefined})             
 
         const invoice = LightningUtils.decodeInvoice(encoded)
         const {amount, expiry, description, timestamp} = LightningUtils.getInvoiceData(invoice)
+        const expiresAt = addSeconds(new Date(timestamp as number * 1000), expiry as number)
 
         // log.trace('Decoded invoice', invoice, 'onEncodedInvoice')
-        log.trace('Invoice data', {amount, expiry, description}, 'onEncodedInvoice')
+        log.trace('[onEncodedInvoice] Invoice data', {amount, expiresAt, description})
 
         if (!amount || amount === 0) {
             infoMessage('Invoice amount should be positive number')            
             return
-        }        
-
-        // all with enough balance
-        let availableBalances = proofsStore.getMintBalancesWithEnoughBalance(amount)
-
-        if (availableBalances.length === 0) {
-            infoMessage('There are not enough funds to send this amount')
-            return
         }
 
-        const expiresAt = addSeconds(new Date(timestamp as number * 1000), expiry as number)
 
-        setAvailableMintBalances(availableBalances)
-        setMintBalanceToTransferFrom(availableBalances[0])
-        setInvoice(invoice)
-        setAmountToTransfer(`${amount}`)
+        if(!isInternetReachable) {
+            setInfo('Your device is currently offline.')
+        }
+        
+        setEncodedInvoice(encoded)
+        setInvoice(invoice)        
         setInvoiceExpiry(expiresAt)
         
         if (paymentRequestDesc) {
@@ -456,6 +497,20 @@ const onEncodedInvoice = async function (encoded: string, paymentRequestDesc: st
         } else if(description) {
             setMemo(description)
         }
+        
+        // We need to retrieve the quote first to know how much is needed to settle invoice in selected currency unit
+        const { mintUrl } = route.params
+        const balanceToTransferFrom  = mintUrl ? 
+            proofsStore.getMintBalance(mintUrl) : 
+            proofsStore.getMintBalancesWithUnit(unit)[0]
+
+        if (!balanceToTransferFrom) {
+            infoMessage(`There is no mint with ${unit} balance from which payment can be made.`)
+            return
+        }        
+   
+        setMintBalanceToTransferFrom(balanceToTransferFrom)
+        // continues in hook that handles other mint selection by user
             
     } catch (e: any) {
         resetState()
@@ -465,16 +520,36 @@ const onEncodedInvoice = async function (encoded: string, paymentRequestDesc: st
 }
 
 const transfer = async function () {
-    setIsLoading(true)
-       
-    WalletTask.transfer(
-        mintBalanceToTransferFrom as MintBalance,
-        parseInt(amountToTransfer),
-        estimatedFee,
-        invoiceExpiry as Date,
-        memo,
-        encodedInvoice,
-    )
+    try {
+        if(!meltQuote) {
+            throw new AppError(Err.VALIDATION_ERROR, 'Missing quote to initiate transfer transaction')
+        }
+
+        if (!mintBalanceToTransferFrom) {
+            setInfo('Select mint balance to transfer from')
+            return
+        }
+
+        setIsLoading(true)
+        setIsTransferTaskSentToQueue(true)
+        
+
+        log.trace('[transfer]', {isInvoiceDonation})
+
+        const amountToTransferInt = round(toNumber(amountToTransfer) * getCurrency(unit).precision, 0)
+
+        WalletTask.transfer(
+            mintBalanceToTransferFrom,
+            amountToTransferInt,
+            unit,
+            meltQuote,        
+            memo,
+            invoiceExpiry as Date,
+            encodedInvoice,
+        )
+    } catch (e: any) {
+
+    }
 }
     
 
@@ -496,12 +571,13 @@ const satsColor = colors.palette.primary200
 
     return (
         <Screen preset="fixed" contentContainerStyle={$screen}>
+            <MintHeader 
+                mint={mintBalanceToTransferFrom ? mintsStore.findByUrl(mintBalanceToTransferFrom?.mintUrl) : undefined}
+                unit={unit}
+                navigation={navigation}
+            />
             <View style={[$headerContainer, {backgroundColor: headerBg}]}>
                 <View style={$amountContainer}>
-                    <CurrencySign 
-                        currencyCode={CurrencyCode.SATS}
-                        textStyle={{color: 'white'}}                        
-                    />
                     <TextInput
                         ref={amountInputRef}
                         onChangeText={amount => setAmountToTransfer(amount)}                                
@@ -516,10 +592,10 @@ const satsColor = colors.palette.primary200
                         }
                     />
 
-                    {encodedInvoice && (estimatedFee || finalFee) ? (
+                    {encodedInvoice && (meltQuote?.fee_reserve || finalFee) ? (
                         <FeeBadge
-                            currencyCode={CurrencyCode.SATS}
-                            estimatedFee={estimatedFee}
+                            currencyCode={getCurrency(unit).code}
+                            estimatedFee={meltQuote?.fee_reserve || 0}
                             finalFee={finalFee}              
                         />    
                     ) : (
@@ -532,12 +608,12 @@ const satsColor = colors.palette.primary200
                 </View>
             </View>
             <View style={$contentContainer}>
-                <>                    
+                {transactionStatus !== TransactionStatus.COMPLETED && (                                    
                     <Card
-                        style={[$card, {minHeight: 0}]}
+                        style={[$card, {minHeight: 50}]}
                         ContentComponent={
                             <ListItem
-                                text={lnurlPayParams?.address || memo || lnurlPayParams?.domain || 'Payment info'}
+                                text={lnurlPayParams?.address || memo || lnurlPayParams?.domain || 'No description'}
                                 subText={lnurlDescription}
                                 LeftComponent={
                                     <Icon
@@ -551,40 +627,47 @@ const satsColor = colors.palette.primary200
                             />
                         }
                     />
-                    {mintBalanceToTransferFrom &&
-                    availableMintBalances.length > 0 &&
-                    transactionStatus !== TransactionStatus.COMPLETED && (
+                )}
+                {availableMintBalances.length > 0 &&
+                transactionStatus !== TransactionStatus.COMPLETED && (
                     <MintBalanceSelector
-                        availableMintBalances={availableMintBalances}
-                        mintBalanceToSendFrom={mintBalanceToTransferFrom as MintBalance}                        
+                        mintBalances={availableMintBalances}
+                        selectedMintBalance={mintBalanceToTransferFrom}
+                        unit={unit}
+                        title='Pay from'
+                        confirmTitle='Pay now'
                         onMintBalanceSelect={onMintBalanceSelect}
-                        onCancel={onClose}
-                        findByUrl={mintsStore.findByUrl}
+                        onCancel={onClose}              
                         onMintBalanceConfirm={transfer}
                     />
-                    )}
-                </>                
-                {transactionStatus === TransactionStatus.COMPLETED && (
+                )}                                
+                {transaction && transactionStatus === TransactionStatus.COMPLETED && (
                     <Card
-                        style={$card}
-                        heading={'Transferred from'}
-                        headingStyle={{textAlign: 'center', padding: spacing.small}}
+                        style={{padding: spacing.medium}}
                         ContentComponent={
-                        <MintListItem
-                            mint={
-                            mintsStore.findByUrl(
-                                mintBalanceToTransferFrom?.mint as string,
-                            ) as Mint
-                            }
-                            isSelectable={false}
-                            mintBalance={proofsStore
-                            .getBalances()
-                            .mintBalances.find(
-                                balance =>
-                                balance.mint === mintBalanceToTransferFrom?.mint,
+                        <>
+                            <TranItem 
+                                label="tranDetailScreen.trasferredTo"
+                                isFirst={true}
+                                value={mintsStore.findByUrl(transaction.mint)?.shortname as string}
+                            />
+                            {transaction?.memo && (
+                            <TranItem
+                                label="tranDetailScreen.memoFromInvoice"
+                                value={transaction.memo as string}
+                            />
                             )}
-                            separator={'top'}
-                        />
+                            <TranItem
+                            label="transactionCommon.feePaid"
+                            value={transaction.fee || 0}
+                            unit={unit}
+                            isCurrency={true}
+                            />
+                            <TranItem
+                                label="tranDetailScreen.status"
+                                value={transaction.status as string}
+                            />
+                        </>
                         }
                     />
                 )}
@@ -600,6 +683,8 @@ const satsColor = colors.palette.primary200
                     </View>
                 )}
                 {isLoading && <Loading />}
+                {error && <ErrorModal error={error} />}
+                {info && <InfoModal message={info} />}
             </View>
             <BottomModal
                 isVisible={isResultModalVisible}
@@ -691,74 +776,11 @@ const satsColor = colors.palette.primary200
                 onBackButtonPress={toggleResultModal}
                 onBackdropPress={toggleResultModal}
             />
-            {error && <ErrorModal error={error} />}
-            {info && <InfoModal message={info} />}
         </Screen>
     )
   }
 )
 
-
-const MintBalanceSelector = observer(function (props: {
-  availableMintBalances: MintBalance[]
-  mintBalanceToSendFrom: MintBalance  
-  onMintBalanceSelect: any
-  onCancel: any
-  findByUrl: any
-  onMintBalanceConfirm: any
-}) {
-
-    const onMintSelect = function(balance: MintBalance) {
-        log.trace('onMintBalanceSelect', balance.mint)
-        return props.onMintBalanceSelect(balance)
-    }
-
-  return (
-    <View style={{flex: 1}}>
-      <Card
-        style={$card}
-        heading={'Pay from'}
-        headingStyle={{textAlign: 'center', padding: spacing.small}}
-        ContentComponent={
-          <>
-            <FlatList<MintBalance>
-                data={props.availableMintBalances}
-                renderItem={({ item, index }) => {                                
-                    return(
-                        <MintListItem
-                            key={item.mint}
-                            mint={props.findByUrl(item.mint) as Mint}
-                            mintBalance={item}
-                            onMintSelect={() => onMintSelect(item)}
-                            isSelectable={true}
-                            isSelected={props.mintBalanceToSendFrom.mint === item.mint}
-                            separator={'top'}
-                        />
-                    )
-                }}                
-                keyExtractor={(item) => item.mint} 
-                style={{ flexGrow: 0, maxHeight: spacing.screenHeight * 0.35 }}
-            />
-          </>
-        }
-      />
-      <View style={$bottomContainer}>
-        <View style={[$buttonContainer, {marginTop: spacing.large}]}>
-            <Button
-            text={'Pay now'}
-            onPress={props.onMintBalanceConfirm}
-            style={{marginRight: spacing.medium}}          
-            />
-            <Button
-            preset="secondary"
-            tx={'common.cancel'}
-            onPress={props.onCancel}
-            />
-        </View>
-      </View>
-    </View>
-  )
-})
 
 const $screen: ViewStyle = {
     flex: 1,
@@ -768,7 +790,7 @@ const $headerContainer: TextStyle = {
     alignItems: 'center',
     padding: spacing.extraSmall,
     paddingTop: 0,
-    height: spacing.screenHeight * 0.18,  
+    height: spacing.screenHeight * 0.20,  
   }
   
   const $amountContainer: ViewStyle = {
@@ -786,7 +808,8 @@ const $headerContainer: TextStyle = {
 
 const $contentContainer: TextStyle = {
     flex: 1,
-    padding: spacing.extraSmall,    
+    padding: spacing.extraSmall,
+    marginTop: -spacing.extraLarge * 2    
 }
 
 const $iconContainer: ViewStyle = {

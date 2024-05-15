@@ -44,9 +44,15 @@ const palette = {
 
   blue100: '#75B4FB',
   blue200: '#818AFF',
+  blue400: '#2D57E1',
+  blue600: '#1D3FBB',
+
+  green400: '#599D52',
 
   orange200: '#FFAB51',
-  orange400: '#F7931A',
+  orange400: '#FF9900',
+  orange600: '#F7931A',
+  orange800: '#AB6E12',
 
   focus100: '#FB4E9E',
   focus200: '#F62586',
@@ -87,6 +93,10 @@ export const colors = {
      * Color for amounts and balances.
      */
     amount: palette.neutral800,
+    /**
+     * Color for amounts and balances.
+     */
+    receivedAmount: palette.success300,
     /**
      * The default color of the screen background.
      */
@@ -130,6 +140,11 @@ export const colors = {
      */
     info: palette.success100,
     /**
+     * Warning Background.
+     *
+     */
+    warn: palette.accent400,
+    /**
      * The default card color.
      */
     card: palette.neutral100,
@@ -158,6 +173,10 @@ export const colors = {
      */
     amount: palette.neutral200,
     /**
+     * Color for amounts and balances.
+     */
+    receivedAmount: palette.success200,
+    /**
      * The default color of the screen background.
      */
     background: palette.neutral700,
@@ -168,7 +187,7 @@ export const colors = {
     /**
      * The default color of the header and status bar.
      */
-    header: palette.primary500,
+    header: palette.primary600,
     /**
      * The default color of the bottom menu.
      */
@@ -199,6 +218,11 @@ export const colors = {
      *
      */
     info: palette.success200,
+    /**
+     * Warning Background.
+     *
+     */
+    warn: palette.accent500,
     /**
      * The default card color.
      */

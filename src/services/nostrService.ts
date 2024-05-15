@@ -22,7 +22,7 @@ import {log} from './logService'
 import AppError, { Err } from '../utils/AppError'
 import { MinibitsClient } from './minibitsService'
 import { rootStoreInstance } from '../models'
-import { Wallet } from './walletService'
+import { WalletTask } from './walletService'
 
 export {     
     NostrEvent, 
@@ -80,7 +80,8 @@ const reconnectToRelays = async function () {
 
     // recreate subscriptions if all relays down
     if(relaysStore.connectedCount === 0) {
-        Wallet.checkPendingReceived().catch(e => false)   
+        WalletTask.handleSpentFromPending().catch(e => false)   
+        WalletTask.handleSpentFromPending().catch(e => false)   
     }
 
     const pool = getRelayPool()    
@@ -202,37 +203,37 @@ const decryptNip04 = async function(
 const publish = async function (
     event: NostrUnsignedEvent,
     relays: string[],    
-): Promise<Event | undefined> {
+): Promise<NostrEvent | undefined> {
 
     const  keys: KeyPair = await getOrCreateKeyPair()    
     
-    event.created_at = Math.floor(Date.now() / 1000) 
-    event.id = getEventHash(event)    
-    event.sig = getSignature(event, keys.privateKey)    
+    const signed = {...event} as NostrEvent
 
-    if(!validateEvent(event)) {
-        throw new AppError(Err.VALIDATION_ERROR, 'Event is invalid and could not be published', event)
+    signed.created_at = Math.floor(Date.now() / 1000) 
+    signed.id = getEventHash(signed)    
+    signed.sig = getSignature(signed, keys.privateKey)    
+
+    if(!validateEvent(signed)) {
+        throw new AppError(Err.VALIDATION_ERROR, 'Event is invalid and could not be published', signed)
     }
     
-    log.trace('Event to be published', event, 'publish')
+    log.trace('Event to be published', signed, 'publish')
 
     const pool = getRelayPool()
-    let pubs = pool.publish(relays, event)
+    let pubs = pool.publish(relays, signed)
     await delay(1000)
     // await Promise.all(pubs)
 
     const published: NostrEvent = await pool.get(relays, {
-        ids: [event.id]
+        ids: [signed.id]
     })
 
     
     if(published) {
-        log.trace('Event successfully published', published, 'NostrClient.publish')
-        // pool.close(relays)
+        log.trace('Event successfully published', published, 'NostrClient.publish')        
         return published
     }
-
-    // pool.close(relays)
+    
     return undefined    
 }
 
@@ -258,10 +259,10 @@ const getEvent = async function (
 const getEvents = async function (    
     relays: string[],
     filters: NostrFilter[]
-): Promise<Event[]> {   
+): Promise<NostrEvent[]> {   
     
     const pool = getRelayPool()    
-    const events: Event[] = await pool.list(relays, filters)    
+    const events: NostrEvent[] = await pool.list(relays, filters)    
 
     if(events && events.length > 0) {       
         return events
@@ -357,7 +358,7 @@ const getProfileFromRelays = async function (pubkey: string, relays: string[]): 
         kinds: [0],            
     }]
 
-    const events: NostrEvent[] = await NostrClient.getEvents(relays, filters)
+    const events = await NostrClient.getEvents(relays, filters)
 
     
     if(!events || events.length === 0) {
@@ -472,7 +473,7 @@ const getNormalizedRelayUrl = function (url: string): string {
 
 
 // returns array of values after the first element (tag name)
-const getTagsByName = function(tagsArray: [string, string][], tagName: string) {
+const getTagsByName = function(tagsArray: string[][], tagName: string) {
     let tagValues = tagsArray.find(t => t && t.length && t.length >= 2 && t[0] === tagName)
     if(tagValues && tagValues.length > 1) {
         tagValues.shift() // remove tag name
@@ -483,7 +484,7 @@ const getTagsByName = function(tagsArray: [string, string][], tagName: string) {
 }
 
 // returns first element after tag name
-const getFirstTagValue = function (tagsArray: [string, string][], tagName: string): string | undefined {
+const getFirstTagValue = function (tagsArray: string[][], tagName: string): string | undefined {
     const tag = tagsArray.find(([name]) => name === tagName)
     return tag ? tag[1] : undefined
 }

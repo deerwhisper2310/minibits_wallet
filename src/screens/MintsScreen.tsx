@@ -1,12 +1,12 @@
 import {observer} from 'mobx-react-lite'
-import React, {FC, useCallback, useRef, useState} from 'react'
+import React, {FC, useRef, useState} from 'react'
 import {Alert, TextInput, TextStyle, View, ViewStyle} from 'react-native'
 import Clipboard from '@react-native-clipboard/clipboard'
 import {
     MINIBITS_MINT_URL 
 } from '@env'
-import {spacing, typography, useThemeColor, colors} from '../theme'
-import {AppStackScreenProps, SettingsStackScreenProps} from '../navigation'
+import {spacing, typography, useThemeColor} from '../theme'
+import {SettingsStackScreenProps} from '../navigation'
 import {
   Button,
   Icon,
@@ -18,15 +18,16 @@ import {
   ListItem,
   BottomModal,
   Text,
+  MintIcon,
 } from '../components'
 import {Mint} from '../models/Mint'
 import {useStores} from '../models'
 import {useHeader} from '../utils/useHeader'
-import {MintKeys, MintClient} from '../services'
 import {log} from '../services/logService'
 import AppError from '../utils/AppError'
 import {translate} from '../i18n'
 import {MintListItem} from './Mints/MintListItem'
+import { SvgXml } from 'react-native-svg'
 
 
 
@@ -86,7 +87,7 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
 
         if(mintUrl.includes('.onion')) {
             if(!userSettingsStore.isTorDaemonOn) {
-                setInfo('Please enable Tor daemon in Privacy settings before connecting to the mint using .onion address.')
+                setInfo('Tor support has been discontinued in version v0.1.7-beta. Minibits needs help to get Tor support back. Visit our Github for more info.')
                 return
             }
         }
@@ -112,6 +113,22 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
     }
 
 
+    const updateMint = async function () {
+      if (!selectedMint) {return}
+
+      try {          
+          setIsLoading(true)
+          await mintsStore.updateMint(selectedMint.mintUrl)
+          setInfo('Mint settings have been updated')
+      } catch (e: any) {          
+          handleError(e)
+      } finally {
+               
+          setIsLoading(false)
+      }
+  }
+
+
     const addDefaultMint = async function () {
         setMintUrl(defaultMintUrl)
         toggleAddMintModal()
@@ -121,12 +138,12 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
 	const removeMint = async function () {
         if (!selectedMint) {return}
 
-        const proofsByMint = proofsStore.getByMint(selectedMint.mintUrl)
-        const pendingProofsByMint = proofsStore.getByMint(selectedMint.mintUrl, true)
+        const proofsByMint = proofsStore.getByMint(selectedMint.mintUrl, {isPending: false})
+        const pendingProofsByMint = proofsStore.getByMint(selectedMint.mintUrl, {isPending: true})
         let message: string = ''
 
         if (proofsByMint && proofsByMint.length > 0) {
-            message = `Your wallet has ${proofsStore.getMintBalance(selectedMint.mintUrl)?.balance} SATS balance with this mint. If removed, your ecash will be lost!\n\n`            
+            message = `Your wallet has non-zero balance with this mint. If removed, your ecash will be lost!\n\n`            
         }
 
         message += `Do you really want to remove ${selectedMint.hostname} - ${selectedMint.shortname} from the wallet?`
@@ -239,11 +256,12 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                     {!mintsStore.alreadyExists(defaultMintUrl) && (
                     <ListItem
                         text={'Add Minibits mint'}
-                        LeftComponent={<Icon
-                            containerStyle={$iconContainer}
-                            icon="faCoins"
-                            size={spacing.medium}
-                            color={iconColor}                  
+                        LeftComponent={<SvgXml 
+                            width={spacing.medium} 
+                            height={spacing.medium} 
+                            xml={MintIcon}
+                            fill={iconColor}
+                            style={{marginLeft: spacing.extraSmall, marginRight: spacing.large}}
                         />
                         }                
                         style={$actionItem}
@@ -267,6 +285,7 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                       isSelectable={true}
                       isSelected={selectedMint?.mintUrl === mint.mintUrl}
                       isBlocked={mintsStore.isBlocked(mint.mintUrl as string)}
+                      isUnitVisible={true}
                       separator={index !== 0 ? 'top' : undefined}
                     />
                   ))}
@@ -288,6 +307,13 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                 bottomSeparator={true}
                 style={{paddingHorizontal: spacing.medium}}
               />
+              <ListItem
+                leftIcon='faRotate'
+                onPress={updateMint}
+                text={'Refresh mint settings'}
+                bottomSeparator={true}
+                style={{paddingHorizontal: spacing.medium}}
+              />
               {mintsStore.isBlocked(selectedMint?.mintUrl as string) ? (
                 <ListItem
                   leftIcon="faShieldHalved"
@@ -305,13 +331,13 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                   style={{paddingHorizontal: spacing.medium}}
                 />
               )}
-              <ListItem
+              {/*<ListItem
                 leftIcon="faPaintbrush"
                 onPress={() => Alert.alert('Not yet implemented')}
                 tx={'mintsScreen.setColor'}
                 bottomSeparator={true}
                 style={{paddingHorizontal: spacing.medium}}
-              />
+              />*/}
               <ListItem
                 leftIcon="faCopy"
                 onPress={onCopyMintUrl}
@@ -325,8 +351,7 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                 tx={'mintsScreen.removeMint'}
                 bottomSeparator={true}
                 style={{paddingHorizontal: spacing.medium}}
-              />
-              <Text text={`Current recovery index: ${selectedMint && selectedMint.getOrCreateProofsCounter?.().counter}`} size='xxs' style={{alignSelf: 'center', marginTop: spacing.small}} />
+              />              
             </View>
           }
           onBackButtonPress={onMintUnselect}
@@ -345,6 +370,7 @@ export const MintsScreen: FC<SettingsStackScreenProps<'Mints'>> = observer(funct
                         <TextInput
                             ref={mintInputRef}
                             onChangeText={mintUrl => setMintUrl(mintUrl)}
+                            onFocus={() => mintUrl.length === 0 ? setMintUrl('https://') : undefined}
                             autoCapitalize='none'
                             keyboardType='default'
                             value={mintUrl}
@@ -409,7 +435,7 @@ const $screen: ViewStyle = {
 const $headerContainer: TextStyle = {
   alignItems: 'center',
   padding: spacing.medium,
-  height: spacing.screenHeight * 0.18,
+  height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {

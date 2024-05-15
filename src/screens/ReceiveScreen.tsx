@@ -1,8 +1,7 @@
 import {observer} from 'mobx-react-lite'
 import React, {FC, useState, useCallback, useEffect} from 'react'
-import {CommonActions, useFocusEffect} from '@react-navigation/native'
-import {Alert, TextInput, TextStyle, View, ViewStyle} from 'react-native'
-import Clipboard from '@react-native-clipboard/clipboard'
+import {useFocusEffect} from '@react-navigation/native'
+import {TextInput, TextStyle, View, ViewStyle} from 'react-native'
 import {spacing, useThemeColor, colors, typography} from '../theme'
 import {WalletStackScreenProps} from '../navigation'
 import {
@@ -21,36 +20,38 @@ import {Mint} from '../models/Mint'
 import {Token} from '../models/Token'
 import {Transaction, TransactionStatus} from '../models/Transaction'
 import {useStores} from '../models'
-import {useHeader} from '../utils/useHeader'
 import {TransactionTaskResult, WalletTask} from '../services'
 import {log} from '../services/logService'
-import AppError from '../utils/AppError'
+import AppError, { Err } from '../utils/AppError'
 import EventEmitter from '../utils/eventEmitter'
 
 import {CashuUtils} from '../services/cashu/cashuUtils'
 import {ResultModalInfo} from './Wallet/ResultModalInfo'
 import {MintListItem} from './Mints/MintListItem'
 import useIsInternetReachable from '../utils/useIsInternetReachable'
-import { moderateVerticalScale, verticalScale } from '@gocodingnow/rn-size-matters'
-import { CurrencyCode, CurrencySign } from './Wallet/CurrencySign'
+import { moderateVerticalScale } from '@gocodingnow/rn-size-matters'
+import { CurrencyCode, MintUnit, formatCurrency, getCurrency } from "../services/wallet/currency"
+import { MintHeader } from './Mints/MintHeader'
+import { round, toNumber } from '../utils/number'
+import numbro from 'numbro'
+import { TranItem } from './TranDetailScreen'
 
 export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
   function ReceiveScreen({route, navigation}) {
-    useHeader({
-      leftIcon: 'faArrowLeft',
-      onLeftPress: () => navigation.goBack(),
-    })
-
     const isInternetReachable = useIsInternetReachable()
     const {mintsStore} = useStores()
 
     const [token, setToken] = useState<Token | undefined>()
     const [encodedToken, setEncodedToken] = useState<string | undefined>()
-    const [amountToReceive, setAmountToReceive] = useState<number>(0)
-    const [receivedAmount, setReceivedAmount] = useState<number>(0)
+    const [amountToReceive, setAmountToReceive] = useState<string>('0')
+    const [unit, setUnit] = useState<MintUnit>('sat')
+    const [receivedAmount, setReceivedAmount] = useState<string>('0')
     const [transactionStatus, setTransactionStatus] = useState<
       TransactionStatus | undefined
     >()
+    const [transaction, setTransaction] = useState<
+    Transaction | undefined
+  >()
     const [memo, setMemo] = useState('')
     const [info, setInfo] = useState('')
     const [error, setError] = useState<AppError | undefined>()
@@ -86,6 +87,7 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
             const {status} = transaction as Transaction
 
             setTransactionStatus(status)
+            setTransaction(transaction)
     
             if (error) {
                 setResultModalInfo({
@@ -100,8 +102,9 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
                 })
             }
     
-            if (receivedAmount) {
-                setReceivedAmount(receivedAmount)
+            if (receivedAmount && receivedAmount > 0) {
+                const currency = getCurrency(unit)
+                setReceivedAmount(`${numbro(receivedAmount / currency.precision).format({thousandSeparated: true, mantissa: currency.mantissa})}`)                
             }    
             
             setIsResultModalVisible(true)            
@@ -121,8 +124,8 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
     const resetState = function () {
         setToken(undefined)
         setEncodedToken(undefined)
-        setAmountToReceive(0)
-        setReceivedAmount(0)
+        setAmountToReceive('0')
+        setReceivedAmount('0')
         setTransactionStatus(undefined)
         setMemo('')
         setInfo('')
@@ -145,12 +148,25 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
         const decoded: Token = CashuUtils.decodeToken(encoded)
         const tokenAmounts = CashuUtils.getTokenAmounts(decoded)
 
-        log.trace('decoded token', decoded)
-        log.trace('tokenAmounts', tokenAmounts)
+        log.trace('decoded token', {decoded})
+        log.trace('tokenAmounts', {tokenAmounts})
+
+        
+
+        if(!decoded.unit) {
+          setInfo(`Currency unit is missing in the received token. Wallet will assume token amount is in Bitcoin ${CurrencyCode.SATS}. Do not continue if your are not sure this is correct.`)
+        }
+
+        const currency = getCurrency(decoded.unit)
 
         setToken(decoded)
-        setAmountToReceive(tokenAmounts.totalAmount)
-
+        setAmountToReceive(numbro(tokenAmounts.totalAmount / currency.precision).format({thousandSeparated: true, mantissa: currency.mantissa}))
+        
+        if(decoded.unit) {
+          log.trace('Token unit', decoded.unit)
+          setUnit(decoded.unit)
+        }
+        
         if (decoded.memo && decoded.memo.length > 0) {
           setMemo(decoded.memo as string)
         }
@@ -164,9 +180,11 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
         setIsLoading(true)       
         setIsReceiveTaskSentToQueue(true) 
 
+        const amountToReceiveInt = round(toNumber(amountToReceive) * getCurrency(unit).precision, 0)
+
         WalletTask.receive(
             token as Token,
-            amountToReceive,
+            amountToReceiveInt,
             memo,
             encodedToken as string,
         )        
@@ -177,9 +195,11 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
         setIsLoading(true)
         setIsReceiveTaskSentToQueue(true) 
 
+        const amountToReceiveInt = round(toNumber(amountToReceive) * getCurrency(unit).precision, 0)
+        
         WalletTask.receiveOfflinePrepare(
             token as Token,
-            amountToReceive,
+            amountToReceiveInt,
             memo,
             encodedToken as string,
         )
@@ -205,16 +225,16 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
 
     return (
       <Screen preset="auto" contentContainerStyle={$screen}>
+            <MintHeader 
+                mint={undefined}
+                unit={unit}
+                navigation={navigation}
+            />
         <View style={[$headerContainer, {backgroundColor: headerBg}]}>
-
-            {receivedAmount > 0 ? (
+            {toNumber(receivedAmount) > 0 ? (
             <View style={$amountContainer}>
-                <CurrencySign 
-                    currencyCode={CurrencyCode.SATS}
-                    textStyle={{color: 'white'}}                       
-                />
                 <TextInput                                        
-                    value={receivedAmount.toLocaleString()}
+                    value={receivedAmount}
                     style={$amountToReceive}
                     maxLength={9}                    
                     editable={false}
@@ -222,12 +242,8 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
             </View>
             ) : (
             <View style={$amountContainer}>
-                <CurrencySign 
-                    currencyCode={CurrencyCode.SATS}
-                    textStyle={{color: 'white'}}                        
-                />
                 <TextInput                                        
-                    value={amountToReceive.toLocaleString()}
+                    value={amountToReceive}
                     style={$amountToReceive}
                     maxLength={9}                    
                     editable={false}
@@ -236,16 +252,16 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
            )}
             <Text
                 size='sm'
-                tx={receivedAmount > 0 ? "receiveScreen.received" : "receiveScreen.toReceive"}
+                tx={toNumber(receivedAmount) > 0 ? "receiveScreen.received" : "receiveScreen.toReceive"}
                 style={{color: 'white', textAlign: 'center'}}
             />
         </View>
         <View style={$contentContainer}>          
-          {token && amountToReceive > 0 && (
+          {token && toNumber(amountToReceive) > 0 && (
             <>
-              {memo && (
+              {memo && transactionStatus !== TransactionStatus.COMPLETED && (
                 <Card
-                  style={[$card, {minHeight: 0, paddingBottom: 0}]}
+                  style={[$card]}
                   ContentComponent={
                     <ListItem
                       text={memo}
@@ -257,18 +273,15 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
                           color={iconColor}
                         />
                       }
-                      style={$item}
+                      style={[$item, {marginTop: spacing.small}]}
                     />
                   }
                 />
               )}
-              <Card
+              {transactionStatus !== TransactionStatus.COMPLETED && (
+                <Card
                 style={$card}
-                heading={
-                  transactionStatus === TransactionStatus.COMPLETED
-                    ? 'Received from'
-                    : 'Receive from'
-                }
+                heading={'Receive to'}
                 headingStyle={{textAlign: 'center', padding: spacing.small}}
                 ContentComponent={
                   <>
@@ -280,7 +293,7 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
                             key={mintUrl}
                             text={new URL(mintUrl).hostname}
                             topSeparator={true}
-                            RightComponent={<Text text='New' style={{alignSelf: 'center', color: colors.palette.accent300}}/>}
+                            RightComponent={<Text size='xs' text='New mint' style={$newBadge}/>}
                           />
                         )
                       } else {
@@ -289,8 +302,8 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
                             key={mintUrl}
                             mint={mint as Mint}
                             separator={'top'}
-                            // mintBalance={mintBalance}
-                            isSelectable={false}
+                            isSelected={true}                            
+                            isSelectable={true}
                           />
                         )
                       }
@@ -298,6 +311,37 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
                   </>
                 }
               />
+              )}              
+              {transaction && transactionStatus === TransactionStatus.COMPLETED && (
+                <Card
+                    style={{padding: spacing.medium}}
+                    ContentComponent={
+                    <>
+                        <TranItem 
+                            label="tranDetailScreen.receivedTo"
+                            isFirst={true}
+                            value={mintsStore.findByUrl(transaction.mint)?.shortname as string}
+                        />
+                        {transaction?.memo && (
+                        <TranItem
+                            label="tranDetailScreen.memoFromSender"
+                            value={transaction.memo as string}
+                        />
+                        )}
+                        <TranItem
+                          label="transactionCommon.feePaid"
+                          value={transaction.fee || 0}
+                          unit={unit}
+                          isCurrency={true}
+                        />
+                        <TranItem
+                            label="tranDetailScreen.status"
+                            value={transaction.status as string}
+                        />
+                    </>
+                    }
+                />
+              )}
               {transactionStatus === TransactionStatus.COMPLETED ? (
                 <View style={$bottomContainer}>
                     <View style={$buttonContainer}>
@@ -349,6 +393,8 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
             </>
           )}
           {isLoading && <Loading />}
+          {error && <ErrorModal error={error} />}
+          {info && <InfoModal message={info} />}
         </View>
         <BottomModal
           isVisible={isResultModalVisible ? true : false}          
@@ -411,8 +457,6 @@ export const ReceiveScreen: FC<WalletStackScreenProps<'Receive'>> = observer(
           onBackButtonPress={toggleResultModal}
           onBackdropPress={toggleResultModal}
         />
-        {error && <ErrorModal error={error} />}
-        {info && <InfoModal message={info} />}
       </Screen>
     )
   },
@@ -426,7 +470,7 @@ const $headerContainer: TextStyle = {
     alignItems: 'center',
     padding: spacing.extraSmall,
     paddingTop: 0,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $amountContainer: ViewStyle = {
@@ -445,6 +489,7 @@ const $amountToReceive: TextStyle = {
 const $contentContainer: TextStyle = {
   flex: 1,
   padding: spacing.extraSmall,
+  marginTop: -spacing.extraLarge * 2,
   // alignItems: 'center',
 }
 
@@ -481,3 +526,13 @@ const $bottomContainer: ViewStyle = {
     alignSelf: 'stretch',
     // opacity: 0,
   }
+
+const $newBadge: TextStyle = {
+    paddingHorizontal: spacing.small,
+    borderRadius: spacing.tiny,
+    alignSelf: 'center',
+    marginVertical: spacing.small,
+    lineHeight: spacing.medium,    
+    backgroundColor: colors.palette.orange400,
+    color: 'white',
+}

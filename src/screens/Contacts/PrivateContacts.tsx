@@ -1,7 +1,7 @@
 import {observer} from 'mobx-react-lite'
 import React, {useEffect, useRef, useState} from 'react'
 import {FlatList, TextInput, TextStyle, View, ViewStyle} from 'react-native'
-import {verticalScale} from '@gocodingnow/rn-size-matters'
+import {moderateVerticalScale, verticalScale} from '@gocodingnow/rn-size-matters'
 import {colors, spacing, useThemeColor} from '../../theme'
 import {BottomModal, Button, Card, ErrorModal, Icon, InfoModal, ListItem, Loading, Screen, Text} from '../../components'
 import {useStores} from '../../models'
@@ -17,14 +17,16 @@ import { ReceiveOption } from '../ReceiveOptionsScreen'
 import { SendOption } from '../SendOptionsScreen'
 import { infoMessage, warningMessage } from '../../utils/utils'
 import { IncomingDataType, IncomingParser } from '../../services/incomingParser'
+import { translate } from '../../i18n'
+import { RouteProp } from '@react-navigation/native'
 
 
 
 export const PrivateContacts = observer(function (props: {
-    navigation: StackNavigationProp<ContactsStackParamList, "Contacts", undefined>,     
-    paymentOption: ReceiveOption | SendOption | undefined}
+    navigation: StackNavigationProp<ContactsStackParamList, "Contacts", undefined>,             
+    paymentOption: ReceiveOption | SendOption | undefined},    
 ) { 
-    const {contactsStore, relaysStore} = useStores()
+    const {contactsStore, relaysStore, userSettingsStore} = useStores()
     const {navigation} = props
     const contactNameInputRef = useRef<TextInput>(null)
  
@@ -39,15 +41,15 @@ export const PrivateContacts = observer(function (props: {
         const { paymentOption } = props        
 
         if (paymentOption && paymentOption === ReceiveOption.SEND_PAYMENT_REQUEST) {
-            infoMessage('Select contact to send your payment request to.')
+            // infoMessage('Select contact to send your payment request to.')
         }
 
         if (paymentOption && paymentOption === SendOption.SEND_TOKEN) {
-            infoMessage('Select contact to send your ecash to.')
+            // infoMessage('Select contact to send your ecash to.')
         }
 
         if (paymentOption && paymentOption === SendOption.LNURL_ADDRESS) {
-            infoMessage('Select contact to send Lightning payment to.')
+            // infoMessage('Select contact to send Lightning payment to.')
         }
     }, [])
     
@@ -80,14 +82,13 @@ export const PrivateContacts = observer(function (props: {
         log.trace('Start', newContactName, 'saveNewContact')
         
         if(!newContactName) {
-            setInfo(`Please enter a wallet address in name@domain.xyz format`)
+            setInfo(translate("contactsScreen.privateContacts.saveNewFormat"))
             return
         }
 
         toggleNewContactModal() // close
         setIsLoading(true)
         
-
         try {
 
             let newContact: Contact | undefined = undefined
@@ -117,7 +118,7 @@ export const PrivateContacts = observer(function (props: {
                 const profileRecord = await MinibitsClient.getWalletProfileByNip05(newContactName + MINIBITS_NIP05_DOMAIN)
 
                 if(!profileRecord) {
-                    warningMessage(`Profile name ${newContactName + MINIBITS_NIP05_DOMAIN} could not be found. Make sure the name is correct.`)
+                    warningMessage(translate("contactsScreen.privateContacts.profileNotFound", { name: newContactName + MINIBITS_NIP05_DOMAIN }))
                     setIsLoading(false)
                     return
                 }
@@ -160,28 +161,22 @@ export const PrivateContacts = observer(function (props: {
             
             log.trace('paymentOption', {paymentOption}, 'gotoContactDetail')
             
-            const relays = relaysStore.allUrls
-            
             if(paymentOption && paymentOption === ReceiveOption.SEND_PAYMENT_REQUEST) { // Topup tx contact selection
                 setIsLoading(true)
                 
                 if(contact.nip05) {                
                     await NostrClient.verifyNip05(contact.nip05 as string, contact.pubkey) // throws
                 }
-                
+
+                // contactsStore.selectContact(contact)
                 navigation.navigate('WalletNavigator', { 
                     screen: 'Topup',
                     params: {
-                        paymentOption, 
-                        contact, 
-                        relays // TODO remove, switch to relaysStore
-                    },
+                        paymentOption,
+                        contact                             
+                    },                                            
                 })
-
-                //reset
-                navigation.setParams({
-                    paymentOption: undefined,
-                })
+                
                 setIsLoading(false)
                 return
             }
@@ -198,15 +193,10 @@ export const PrivateContacts = observer(function (props: {
                     screen: 'Send',
                     params: {
                         paymentOption, 
-                        contact, 
-                        relays // TODO remove, switch to relaysStore
+                        contact                        
                     },
                 })
 
-                //reset
-                navigation.setParams({
-                    paymentOption: undefined,
-                })
                 setIsLoading(false)
                 return
             }
@@ -214,14 +204,14 @@ export const PrivateContacts = observer(function (props: {
 
             if(paymentOption && paymentOption === SendOption.LNURL_ADDRESS) {
                 if(!contact.lud16) {
-                    setInfo('This contact does not have a Lightning address, send ecash instead.')
+                    setInfo(translate("contactsScreen.privateContacts.noLightningAddress"))
                     return
                 }
 
                 await IncomingParser.navigateWithIncomingData({
                     type: IncomingDataType.LNURL_ADDRESS,
                     encoded: contact.lud16
-                }, navigation)
+                }, navigation, userSettingsStore.preferredUnit)
 
                 //reset
                 navigation.setParams({
@@ -231,10 +221,8 @@ export const PrivateContacts = observer(function (props: {
                 return
             }
 
-            navigation.navigate('ContactDetail', {                   
-                contact, 
-                relays    // TODO remove, switch to relaysStore 
-            })
+            navigation.navigate('ContactDetail', {contact})
+
         } catch (e: any) {
             // reset so that invalid contact can be deleted
             navigation.setParams({
@@ -255,123 +243,153 @@ export const PrivateContacts = observer(function (props: {
     }
     
     const domainText = useThemeColor('textDim')
+    const iconColor = useThemeColor('textDim')
     const inputBg = useThemeColor('background')
+    const mainButtonColor = useThemeColor('card')
+    const mainButtonIcon = useThemeColor('button')
+    const screenBg = useThemeColor('background')
 
     return (
-    <Screen contentContainerStyle={$screen}>        
+      <Screen contentContainerStyle={$screen}>
         <View style={$contentContainer}>
-            {contactsStore.count > 0 ? (
+          {contactsStore.count > 0 ? (
             <Card
-                ContentComponent={
-                    <>  
-                        <FlatList<Contact>
-                            data={contactsStore.all as Contact[]}
-                            renderItem={({ item, index }) => {                                
-                                return(
-                                    <ContactListItem                                        
-                                        contact={item}
-                                        isFirst={index === 0}
-                                        gotoContactDetail={() => gotoContactDetail(item)}                  
-                                    />
-                                )
-                            }}
-                            keyExtractor={(item) => item.pubkey} 
-                            style={{ flexGrow: 0  }}
-                        />
-                    </>
-                }
-                style={$card}
+              ContentComponent={
+                <FlatList<Contact>
+                  data={contactsStore.all as Contact[]}
+                  renderItem={({item, index}) => {
+                    return (
+                      <ContactListItem
+                        contact={item}
+                        isFirst={index === 0}
+                        gotoContactDetail={() => gotoContactDetail(item)}
+                      />
+                    )
+                  }}
+                  keyExtractor={item => item.pubkey}
+                  style={{flexGrow: 0}}
+                />
+              }
+              style={$card}
             />
-            ) : (
-                <Card
-                    ContentComponent={
-                        <>
-                        <ListItem
-                            leftIcon='faComment'
-                            leftIconInverse={true}
-                            leftIconColor={colors.palette.iconGreen200}
-                            text='Private contacts'
-                            subText={"Add other Minibits users as your private contacts. Every user gets sharable @minibits.cash wallet address. You can pay privately to your contacts anytime even if they are offline."}
-                            onPress={gotoNew}
-                        />
-                        <ListItem
-                            leftIcon='faCircleUser'
-                            leftIconInverse={true}
-                            leftIconColor={colors.palette.iconMagenta200}
-                            text="Switch your wallet name and picture?"
-                            subText={"Get cooler wallet name or profile picture. Select from an array of random names and images or opt for your own @minibits.cash wallet name."}
-                            onPress={gotoProfile}
-                            topSeparator={true}
-                        />                     
-                        </>
-                    }
-                    style={$card}                
-                /> 
-            )}            
-            {isLoading && <Loading />}
+          ) : (
+            <Card
+              ContentComponent={
+                <>
+                  <ListItem
+                    leftIcon="faComment"
+                    leftIconInverse={true}
+                    leftIconColor={colors.palette.iconGreen200}
+                    tx='contactsScreen.privateContacts.explainerText'
+                    subTx="contactsScreen.privateContacts.explainerSubText"
+                    onPress={gotoNew}
+                  />
+                  <ListItem
+                    leftIcon="faCircleUser"
+                    leftIconInverse={true}
+                    leftIconColor={colors.palette.iconMagenta200}
+                    tx="contactsScreen.privateContacts.switchName"
+                    subTx='contactsScreen.privateContacts.switchNameSubText'
+                    onPress={gotoProfile}
+                    topSeparator={true}
+                  />
+                </>
+              }
+              style={$card}
+            />
+          )}
+          {isLoading && <Loading />}
         </View>
         <View style={$bottomContainer}>
             <View style={$buttonContainer}>
                 <Button
-                    tx={'contactsScreen.new'}
                     LeftAccessory={() => (
                         <Icon
-                        icon='faCircleUser'
-                        color='white'
-                        size={spacing.medium}                  
+                            icon='faPlus'
+                            size={spacing.large}
+                            color={mainButtonIcon}
                         />
                     )}
-                    onPress={gotoNew}
-                    style={$buttonNew}
-                    />                
+                    onPress={gotoNew}                        
+                    style={[{backgroundColor: mainButtonColor, borderWidth: 1, borderColor: screenBg}, $buttonNew]}
+                    preset='tertiary'
+                    text='Add'
+                />            
             </View>
         </View>       
         <BottomModal
-            isVisible={isNewContactModalVisible ? true : false}            
-            ContentComponent={
-                <View style={$newContainer}>
-                    <Text tx='contactsScreen.newTitle' preset="subheading" />
-                    <Text size='xxs' style={{color: domainText}} text='Private contacts are unique identifiers of other Minibits wallets. You can use them to send or request ecash and you can safely share your own with others.' />
-                    <View style={{flexDirection: 'row', alignItems: 'center', marginTop: spacing.small}}>
-                        <TextInput
-                            ref={contactNameInputRef}
-                            onChangeText={newContactName => setNewContactName(newContactName)}
-                            value={newContactName}
-                            autoCapitalize='none'
-                            keyboardType='default'
-                            maxLength={60}                            
-                            selectTextOnFocus={true}
-                            style={[$contactInput, {backgroundColor: inputBg}, (isExternalDomain) && {marginRight: spacing.small, borderTopRightRadius: spacing.small, borderBottomRightRadius: spacing.small}]}                        
-                        />
-                        {!isExternalDomain && (
-                            <View style={[$contactDomain, { backgroundColor: inputBg}]}>
-                                <Text size='xxs' style={{color: domainText}} text={MINIBITS_NIP05_DOMAIN}/>
-                            </View>
-                        )}
-                        <Button
-                            tx={'common.save'}
-                            style={{
-                                borderRadius: spacing.small,
-                                marginRight: spacing.small,
-                            }}
-                            onPress={saveNewContact}
-                        />
-                    </View>                    
-                    <Button
-                        preset='tertiary'
-                        text={isExternalDomain ? 'Use minibits.cash domain' : 'Use another domain'}
-                        onPress={toggleExternalDomain}
-                        style={{alignSelf: 'flex-start', minHeight: verticalScale(30)}}
-                        textStyle={{lineHeight: verticalScale(16), fontSize: 12}}   
+          isVisible={isNewContactModalVisible ? true : false}
+          ContentComponent={
+            <View style={$newContainer}>
+              <Text tx="contactsScreen.newTitle" preset="subheading" />
+              <Text
+                size="xxs"
+                style={{color: domainText}}
+                tx="contactsScreen.privateContacts.bottomModal"
+              />
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginTop: spacing.small,
+                }}>
+                <TextInput
+                  ref={contactNameInputRef}
+                  onChangeText={newContactName =>
+                    setNewContactName(newContactName)
+                  }
+                  value={newContactName}
+                  autoCapitalize="none"
+                  keyboardType="default"
+                  maxLength={60}
+                  selectTextOnFocus={true}
+                  style={[
+                    $contactInput,
+                    {backgroundColor: inputBg},
+                    isExternalDomain && {
+                      marginRight: spacing.small,
+                      borderTopRightRadius: spacing.small,
+                      borderBottomRightRadius: spacing.small,
+                    },
+                  ]}
+                />
+                {!isExternalDomain && (
+                  <View style={[$contactDomain, {backgroundColor: inputBg}]}>
+                    <Text
+                      size="xxs"
+                      style={{color: domainText}}
+                      text={MINIBITS_NIP05_DOMAIN}
                     />
-                </View>
-            }
-            onBackButtonPress={toggleNewContactModal}
-            onBackdropPress={toggleNewContactModal}
-        /> 
+                  </View>
+                )}
+                <Button
+                  tx={'common.save'}
+                  style={{
+                    borderRadius: spacing.small,
+                    marginRight: spacing.small,
+                  }}
+                  onPress={saveNewContact}
+                />
+              </View>
+              <Button
+                preset="tertiary"
+                tx={
+                  isExternalDomain
+                    ? 'contactsScreen.privateContacts.domainMinibits'
+                    : 'contactsScreen.privateContacts.domainExternal'
+                }
+                onPress={toggleExternalDomain}
+                style={{alignSelf: 'flex-start', minHeight: verticalScale(30)}}
+                textStyle={{lineHeight: verticalScale(16), fontSize: 12}}
+              />
+            </View>
+          }
+          onBackButtonPress={toggleNewContactModal}
+          onBackdropPress={toggleNewContactModal}
+        />
         {info && <InfoModal message={info} />}
         {error && <ErrorModal error={error} />}
-    </Screen>
+      </Screen>
     )
   })
 
@@ -381,6 +399,7 @@ const $screen: ViewStyle = {
 }
 
 const $contentContainer: TextStyle = {
+    flex: 1,
     padding: spacing.extraSmall,
 }
 
@@ -400,8 +419,8 @@ const $newContainer: TextStyle = {
 
 const $contactInput: TextStyle = {
     flex: 1,    
-    borderTopLeftRadius: spacing.small,
-    borderBottomLeftRadius: spacing.small,
+    borderTopLeftRadius: spacing.extraSmall,
+    borderBottomLeftRadius: spacing.extraSmall,
     fontSize: 16,
     padding: spacing.small,
     alignSelf: 'stretch',
@@ -410,8 +429,8 @@ const $contactInput: TextStyle = {
 
 const $contactDomain: TextStyle = {    
     marginRight: spacing.small,
-    borderTopRightRadius: spacing.small,
-    borderBottomRightRadius: spacing.small,    
+    borderTopRightRadius: spacing.extraSmall,
+    borderBottomRightRadius: spacing.extraSmall,    
     padding: spacing.extraSmall,
     alignSelf: 'stretch',
     justifyContent: 'center'
@@ -419,23 +438,26 @@ const $contactDomain: TextStyle = {
 }
 
 const $buttonContainer: ViewStyle = {
-    flexDirection: 'row',
-    alignSelf: 'center',
+  flexDirection: 'row',
+  marginBottom: spacing.tiny,
+  justifyContent: 'center',
+  alignItems: 'center',   
 }
 
 const $bottomContainer: ViewStyle = {
-    position: 'absolute',
+    /*position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     flex: 1,
     justifyContent: 'flex-end',
-    marginBottom: spacing.medium,
-    alignSelf: 'stretch',
+    marginBottom: spacing.medium,*/
+    alignSelf: 'center',
     // opacity: 0,
   }
   
   const $buttonNew: ViewStyle = {
-    borderRadius: 30,    
-    minWidth: verticalScale(110),    
-  }  
+    borderRadius: moderateVerticalScale(60 / 2),
+    height: moderateVerticalScale(60),
+    minWidth: verticalScale(120),  
+  } 

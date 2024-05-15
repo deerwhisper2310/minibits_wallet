@@ -126,6 +126,8 @@ async function _runMigrations(rootStore: RootStore) {
         relaysStore,
         contactsStore,
         mintsStore,
+        proofsStore,
+        transactionsStore
     } = rootStore
     
     let currentVersion = rootStore.version
@@ -232,12 +234,59 @@ async function _runMigrations(rootStore: RootStore) {
         }
 
         if(currentVersion < 11) {
-            log.trace(`Starting rootStore migrations from version v${currentVersion} -> v10`)
+            log.trace(`Starting rootStore migrations from version v${currentVersion} -> v11`)
             // migration code needs to run early so it is in mmkvStorage.getInstance()
             userSettingsStore.setIsStorageMigrated(true)
             rootStore.setVersion(rootStoreModelVersion)
             log.info(`Completed rootStore migrations to the version v${rootStoreModelVersion}`)
         }
+
+        if(currentVersion < 12) {
+            log.trace(`Starting rootStore migrations from version v${currentVersion} -> v12`)
+
+            userSettingsStore.setPreferredUnit('sat')
+            
+            for (const mint of mintsStore.allMints) {
+                try {                    
+                    mint.addUnit('sat')
+                    mint.resetCounters()
+                } catch (e: any) {
+                    continue
+                }
+            }
+
+            rootStore.setVersion(rootStoreModelVersion)
+            log.info(`Completed rootStore migrations to the version v${rootStoreModelVersion}`)
+        }
+        
+        if(currentVersion < 13) {
+            log.trace(`Starting rootStore migrations from version v${currentVersion} -> v13`)
+
+            userSettingsStore.setPreferredUnit('sat')
+            
+            for (const proof of proofsStore.allProofs) {
+                try {
+                    if(!proof.unit) {
+                        proof.setUnit('sat')
+                    }                                    
+                } catch (e: any) {
+                    continue
+                }
+            }
+
+            for (const tx of transactionsStore.all) {
+                try {
+                    if(!tx.unit) {
+                        tx.setUnit('sat')
+                    }                                    
+                } catch (e: any) {
+                    continue
+                }
+            }
+
+            rootStore.setVersion(rootStoreModelVersion)
+            log.info(`Completed rootStore migrations to the version v${rootStoreModelVersion}`)
+        } 
 
     } catch (e: any) {
         throw new AppError(

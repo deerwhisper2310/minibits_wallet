@@ -16,13 +16,17 @@ import {
 } from './Transaction'
 import {Database, MintClient} from '../services'
 import {log} from '../services/logService'
-import { min } from 'date-fns'
 import { getRootStore } from './helpers/getRootStore'
-import formatDistance from 'date-fns/formatDistance'
+import { formatDistance } from 'date-fns'
+import { MintUnit } from '../services/wallet/currency'
+import { Mint } from './Mint'
+import { ReceiveOption, SendOption } from '../screens'
+import { Contact } from './Contact'
 
 export const maxTransactionsInModel = 10
 export const maxTransactionsByMint = 10
 export const maxTransactionsByHostname = 3
+export const maxTransactionsByUnit = 5
 
 export type GroupedByTimeAgo = {
     [timeAgo: string]: Transaction[];
@@ -31,6 +35,10 @@ export type GroupedByTimeAgo = {
 export const TransactionsStoreModel = types
     .model('TransactionsStore', {
         transactions: types.array(TransactionModel),
+        /*tranUnit: types.maybe(types.frozen<MintUnit>()),
+        tranMint: types.maybe(types.frozen<Mint>()),
+        tranOption: types.maybe(types.frozen<ReceiveOption | SendOption>()),
+        tranContact: types.maybe(types.frozen<Contact>())*/
     })
     .actions(withSetPropAction)
     .views(self => ({
@@ -54,7 +62,7 @@ export const TransactionsStoreModel = types
             return this.all.filter(t => t.status === TransactionStatus.PENDING)
         },
         get groupedByTimeAgo() {
-            return this.all.reduce((groups: GroupedByTimeAgo, transaction: Transaction) => {                               
+            return this.all.reduce((groups: GroupedByTimeAgo, transaction: Transaction) => {
                 const timeAgo = formatDistance(transaction.createdAt as Date, new Date(), {addSuffix: true})  
                 if (!groups[timeAgo]) {
                     groups[timeAgo] = []
@@ -64,7 +72,7 @@ export const TransactionsStoreModel = types
             }, {})
         },
         get groupedPendingByTimeAgo() {
-            return this.pending.reduce((groups: GroupedByTimeAgo, transaction: Transaction) => {                               
+            return this.pending.reduce((groups: GroupedByTimeAgo, transaction: Transaction) => {
                 const timeAgo = formatDistance(transaction.createdAt as Date, new Date(), {addSuffix: true})  
                 if (!groups[timeAgo]) {
                     groups[timeAgo] = []
@@ -79,6 +87,13 @@ export const TransactionsStoreModel = types
         },
         recentByHostname(mintHostname: string) {            
             return this.all.filter(t => getHostname(t.mint as string) === mintHostname).slice(0, maxTransactionsByHostname)
+        },
+        recentByUnit(unit: MintUnit, count?: number) {
+            if (!count || count > maxTransactionsByUnit) {
+                count = maxTransactionsByUnit
+            }
+                      
+            return this.all.filter(t => t.unit === unit).slice(0, count)
         },
         recentByHostnameGroupedByTimeAgo(mintHostname: string) {
             const recentByHostname = this.recentByHostname(mintHostname)
@@ -329,6 +344,30 @@ export const TransactionsStoreModel = types
             self.transactions.clear()
             log.debug('[removeAllTransactions]', 'Removed all transactions from TransactionsStore')
         },
+        /* setTranUnit(unit: MintUnit) {
+            self.tranUnit = unit
+        },
+        setTranMint(mint: Mint) {
+            self.tranMint = mint
+        },
+        setTranOption(option: ReceiveOption | SendOption) {
+            self.tranOption = option
+        },
+        setTranContact(contact: Contact) {
+            self.tranContact = contact
+        },
+        unsetTranUnit() {
+            self.tranUnit = undefined
+        },
+        unsetTranMint(mint: Mint) {
+            self.tranMint = undefined
+        },
+        unsetTranOption(option: ReceiveOption | SendOption) {
+            self.tranOption = undefined
+        },
+        unsetTranContact(contact: Contact) {
+            self.tranContact = undefined
+        },*/
     }))
 
     const getHostname = function (mintUrl: string) {

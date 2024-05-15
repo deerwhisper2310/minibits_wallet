@@ -74,9 +74,10 @@ const PAGES = [
 export const WelcomeScreen: FC<AppStackScreenProps<'Welcome'>> =
   function WelcomeScreen(_props) {
     const {navigation} = _props
+    const headerBg = useThemeColor('header')  
 
     useHeader({
-      backgroundColor: colors.palette.primary500,
+      backgroundColor: headerBg,
       //StatusBarProps: {barStyle: 'dark-content'},
     })
 
@@ -146,9 +147,7 @@ export const WelcomeScreen: FC<AppStackScreenProps<'Welcome'>> =
         
       // eslint-disable-next-line react-hooks/exhaustive-deps
       []
-    )
-
-    const headerBg = useThemeColor('header')  
+    )    
 
     const renderBullet = ({item}: {item: {id: string; tx: string}}) => (
         <View style={$listItem}>
@@ -232,7 +231,7 @@ export const WelcomeScreen: FC<AppStackScreenProps<'Welcome'>> =
                         data={PAGES}
                         inActiveDotColor={colors.palette.primary300}
                         activeDotColor={colors.palette.primary100}
-                        activeDotScale={1.2}
+                        activeDotScale={1}
                         containerStyle={{bottom: undefined, position: undefined, marginTop: -spacing.small, paddingBottom: spacing.medium}}
                         //@ts-ignore
                         scrollX={scrollX}
@@ -241,7 +240,7 @@ export const WelcomeScreen: FC<AppStackScreenProps<'Welcome'>> =
                 </View>
             </View>
             {error && <ErrorModal error={error} />}
-            {isLoading && <Loading statusMessage={'Creating wallet seed, this takes a while...'} style={{backgroundColor: headerBg, opacity: 1}}/>}
+            {isLoading && <Loading statusMessage={'Creating wallet seed, this takes a while...'} style={{backgroundColor: headerBg, opacity: 1}} textStyle={{color: 'white'}}/>}
         </Screen>
     )
   }

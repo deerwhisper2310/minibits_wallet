@@ -11,6 +11,7 @@ import Clipboard from '@react-native-clipboard/clipboard'
 import { log } from '../services/logService'
 import { KeyChain, MinibitsClient, NostrClient, NostrProfile } from '../services'
 import { MINIBITS_NIP05_DOMAIN } from '@env'
+import { StackActions } from '@react-navigation/native'
 
 interface ProfileScreenProps extends ContactsStackScreenProps<'Profile'> {}
 
@@ -98,6 +99,14 @@ export const ProfileScreen: FC<ProfileScreenProps> = observer(
         }
     }
 
+    const onCopyNip05 = function () {        
+        try {
+            Clipboard.setString(nip05)
+        } catch (e: any) {
+            setInfo(`Could not copy: ${e.message}`)
+        }
+    }
+
 
     const onSyncOwnProfile = async function () {
         try {
@@ -173,7 +182,26 @@ export const ProfileScreen: FC<ProfileScreenProps> = observer(
       <Screen contentContainerStyle={$screen} preset='auto'>
             <Header 
                 leftIcon='faArrowLeft'
-                onLeftPress={navigation.goBack}
+                onLeftPress={() => {
+                    /* const routes = navigation.getState()?.routes
+                    let prevRouteName: string = ''
+        
+                    if(routes.length >= 2) {
+                        prevRouteName = routes[routes.length - 2].name
+                    }
+        
+                    if(prevRouteName === 'Contacts') {
+                        navigation.navigate('Contacts', {})
+                    } else {
+                        navigation.dispatch(
+                            StackActions.replace('Contacts')                    
+                        )
+                        navigation.navigate('WalletNavigator', {screen: 'Wallet', params: {}})
+                    } */
+                    navigation.goBack()
+                }}
+                rightIcon='faCopy'
+                onRightPress={onCopyNip05}
             />        
             <ProfileHeader />        
             <View style={$contentContainer}>
@@ -330,7 +358,7 @@ const $screen: ViewStyle = {
 const $headerContainer: TextStyle = {
     alignItems: 'center',
     padding: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {

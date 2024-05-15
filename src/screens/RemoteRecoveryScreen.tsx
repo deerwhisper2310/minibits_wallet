@@ -20,12 +20,12 @@ import {
 } from '../components'
 import {useHeader} from '../utils/useHeader'
 import AppError, { Err } from '../utils/AppError'
-import { KeyChain, log, MinibitsClient, MintClient, MintKeys, NostrClient } from '../services'
+import { KeyChain, log, MinibitsClient, MintClient, NostrClient } from '../services'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { useStores } from '../models'
 import { MintListItem } from './Mints/MintListItem'
 import { Mint } from '../models/Mint'
-import { CashuMint, deriveKeysetId } from '@cashu/cashu-ts'
+import { CashuMint, MintActiveKeys, MintAllKeysets, MintKeyset, deriveKeysetId } from '@cashu/cashu-ts'
 import { CashuUtils } from '../services/cashu/cashuUtils'
 import { Proof } from '../models/Proof'
 import {
@@ -38,6 +38,9 @@ import { MINIBITS_NIP05_DOMAIN } from '@env'
 import { delay } from '../utils/utils'
 import { isStateTreeNode } from 'mobx-state-tree'
 import { scale } from '@gocodingnow/rn-size-matters'
+import { WalletUtils } from '../services/wallet/utils'
+import { WalletScreen } from './WalletScreen'
+import { MintUnit } from '../services/wallet/currency'
 
 if (Platform.OS === 'android' &&
     UIManager.setLayoutAnimationEnabledExperimental) {
@@ -65,8 +68,8 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
     const [isValidMnemonic, setIsValidMnemonic] = useState(false)
     const [seed, setSeed] = useState<Uint8Array>()
     const [selectedMintUrl, setSelectedMintUrl] = useState<string | undefined>()
-    const [selectedKeysetId, setSelectedKeysetId] = useState<string | undefined>()
-    const [selectedMintKeysets, setSelectedMintKeysets] = useState<string[]>([])
+    const [selectedKeyset, setSelectedKeyset] = useState<MintKeyset | undefined>()
+    const [selectedMintKeysets, setSelectedMintKeysets] = useState<MintKeyset[]>([])
     const [startIndexString, setStartIndexString] = useState<string>('0')
     const [startIndex, setStartIndex] = useState<number>(0) // start of interval of indexes of proofs to recover
     const [endIndex, setEndIndex] = useState<number>(RESTORE_INDEX_INTERVAL) // end of interval
@@ -166,16 +169,15 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
     }
 
 
-    const onMintSelect = function (mint: Mint) {
+    const onMintSelect = async function (mint: Mint) {
         try {
-        setSelectedMintUrl(mint.mintUrl)
-
-        const currentKeysetId = deriveKeysetId(mint.keys)
-        
-        setSelectedKeysetId(currentKeysetId)
-        setSelectedMintKeysets(mint.keysets)
-        setStartIndex(0)
-        setEndIndex(RESTORE_INDEX_INTERVAL)
+            setSelectedMintUrl(mint.mintUrl)
+            const allActiveKeysets = await MintClient.getMintKeysets(mint.mintUrl)
+            
+            setSelectedKeyset(allActiveKeysets[0])
+            setSelectedMintKeysets(allActiveKeysets)
+            setStartIndex(0)
+            setEndIndex(RESTORE_INDEX_INTERVAL)
         } catch (e: any) {
             handleError(e)
         }
@@ -222,18 +224,26 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
 
         try {
             if(!recoveredMint) {                
+                setInfo('Please select the mint.')
+                return
+            }
+
+            if(!selectedKeyset) {                
+                setInfo('Please select keyset.')
                 return
             }
             
             setStatusMessage(`Restoring from ${recoveredMint.hostname}...`)
             log.info('[restore]', `Restoring from ${recoveredMint.hostname}...`)
             
-            const { proofs, newKeys } = await MintClient.restore(
+            const { proofs } = await MintClient.restore(
                 recoveredMint.mintUrl, 
-                startIndex, 
-                endIndex,
                 seed as Uint8Array,
-                selectedKeysetId
+                {
+                    indexFrom: startIndex, 
+                    indexTo: endIndex,                    
+                    keysetId: selectedKeyset.id as string
+                }                
             )
 
             log.debug('[restore]', `Restored proofs`, proofs.length)                
@@ -241,9 +251,7 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
             
             if (proofs.length > 0) {
                 // need to move counter by whole interval to avoid duplicate _B!!!
-                recoveredMint.increaseProofsCounter(Math.abs(endIndex - startIndex))
-        
-                if(newKeys) {updateMintKeys(recoveredMint.mintUrl as string, newKeys)}
+                recoveredMint.increaseProofsCounter(selectedKeyset.id as string, Math.abs(endIndex - startIndex))
                 
                 const {spent, pending} = await MintClient.getSpentOrPendingProofsFromMint(
                     recoveredMint.mintUrl,
@@ -276,8 +284,10 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                     const newTransaction: Transaction = {
                         type: TransactionType.RECEIVE,
                         amount,
+                        fee: 0,
+                        unit: selectedKeyset.unit as MintUnit,
                         data: JSON.stringify(transactionData),
-                        memo: 'Wallet recovery',
+                        memo: 'Wallet recovery from seed',
                         mint: recoveredMint.mintUrl,
                         status: TransactionStatus.PREPARED,
                     }
@@ -285,11 +295,15 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                     const draftTransaction: TransactionRecord = await transactionsStore.addTransaction(newTransaction)
                     transactionId = draftTransaction.id as number
 
-                    const { amountToAdd, addedAmount } = addCashuProofs(
-                        unspent,
+                    const { amountToAdd, addedAmount } = WalletUtils.addCashuProofs(
                         recoveredMint.mintUrl,
-                        transactionId as number                
-                    )                    
+                        unspent,
+                        {
+                            unit: selectedKeyset.unit as MintUnit,
+                            transactionId: pendingTransactionId as number,
+                            isPending: false
+                        }            
+                    )                 
 
                     if (amountToAdd !== addedAmount) {
                         await transactionsStore.updateReceivedAmount(
@@ -313,8 +327,8 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                         JSON.stringify(transactionData),
                     )
 
-                    const balanceAfter = proofsStore.getBalances().totalBalance
-                    await transactionsStore.updateBalanceAfter(transactionId, balanceAfter)
+                    const balanceAfter = proofsStore.getUnitBalance(selectedKeyset.unit as MintUnit)?.unitBalance
+                    await transactionsStore.updateBalanceAfter(transactionId, balanceAfter || 0)
                 }
             
                 if(pending && pending.length > 0) {
@@ -334,6 +348,8 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                     const newTransaction: Transaction = {
                         type: TransactionType.RECEIVE,
                         amount,
+                        fee: 0,
+                        unit: selectedKeyset?.unit as MintUnit,
                         data: JSON.stringify(transactionData),
                         memo: 'Wallet recovery - pending',
                         mint: recoveredMint.mintUrl,
@@ -343,11 +359,14 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                     const draftTransaction: TransactionRecord = await transactionsStore.addTransaction(newTransaction)
                     pendingTransactionId = draftTransaction.id as number
 
-                    const { amountToAdd, addedAmount } = addCashuProofs(
-                        pending,
+                    const { amountToAdd, addedAmount } = WalletUtils.addCashuProofs(
                         recoveredMint.mintUrl,
-                        pendingTransactionId as number,
-                        true  // isPending = true              
+                        pending,
+                        {
+                            unit: selectedKeyset?.unit as MintUnit,
+                            transactionId: pendingTransactionId as number,
+                            isPending: true
+                        }            
                     )
 
                     if (amountToAdd !== addedAmount) {
@@ -383,7 +402,7 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
             if (transactionId > 0) {
                 transactionData.push({
                     status: TransactionStatus.ERROR,
-                    error: formatError(e),
+                    error: WalletUtils.formatError(e),
                     createdAt: new Date(),
                 })
 
@@ -397,7 +416,7 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
             if (pendingTransactionId > 0) {
                 pendingTransactionData.push({
                     status: TransactionStatus.ERROR,
-                    error: formatError(e),
+                    error: WalletUtils.formatError(e),
                     createdAt: new Date(),
                 })
 
@@ -448,63 +467,6 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
 
         toggleResultModal() // open
 
-    }
-
-
-    // TODO: make it DRY with walletService
-    const updateMintKeys = function (mintUrl: string, newKeys: MintKeys) {
-        if(!CashuUtils.validateMintKeys(newKeys)) {
-            // silent
-            log.warn('[_updateMintKeys]', 'Invalid mint keys to update, skipping', newKeys)
-            return
-        }
-    
-        const keyset = deriveKeysetId(newKeys)
-        const mint = mintsStore.findByUrl(mintUrl)
-    
-        mint?.updateKeys(keyset, newKeys) // TODO make only newKeys as param
-        // needed to get rid of cached old keyset
-        MintClient.resetCachedWallets()
-    }
-
-
-    // TODO: make it DRY with walletService
-    const addCashuProofs = function (
-        proofsToAdd: CashuProof[],
-        mintUrl: string,
-        transactionId: number,
-        isPending: boolean = false    
-    ): {  
-        amountToAdd: number,  
-        addedAmount: number,
-        addedProofs: Proof[]
-    } {
-        // Add internal references
-        for (const proof of proofsToAdd as Proof[]) {
-            proof.tId = transactionId
-            proof.mintUrl = mintUrl
-        }
-        
-        const amountToAdd = CashuUtils.getProofsAmount(proofsToAdd as Proof[])    
-        // Creates proper model instances and adds them to the wallet    
-        const {addedAmount, addedProofs} = proofsStore.addProofs(proofsToAdd as Proof[], isPending)
-                
-        log.trace('[addCashuProofs]', 'Added recovered proofs to the wallet with amount', { amountToAdd, addedAmount, isPending })
-    
-        return {        
-            amountToAdd,
-            addedAmount,
-            addedProofs
-        }
-    }
-
-    // TODO: make it DRY with walletService
-    const formatError = function (e: AppError) {
-        return {
-            name: e.name,
-            message: e.message.slice(0, 100),
-            params: e.params || {},
-        } as AppError 
     }
 
 
@@ -661,7 +623,7 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                                 {mintsStore.mintCount > 0 && selectedMintUrl && (
                                 <>
                                     <View style={$buttonContainer}> 
-                                        {(startIndex > 0 || totalRecoveredAmount) > 0 && (
+                                        {(startIndex > 0 || totalRecoveredAmount > 0) && (
                                             <Button
                                                 onPress={onComplete}
                                                 text={'Complete'}
@@ -692,7 +654,7 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                                     </View>
                                     <View style={[$buttonContainer,{marginTop: 0}]}>
                                     <Text 
-                                        text={`Keyset ID ${selectedKeysetId}`} 
+                                        text={`Keyset ID ${selectedKeyset?.id} (${selectedKeyset?.unit})`}
                                         size='xxs' 
                                         style={{color: textHint, alignSelf: 'center', marginTop: spacing.extraSmall}}
                                     />
@@ -809,19 +771,19 @@ export const RemoteRecoveryScreen: FC<AppStackScreenProps<'RemoteRecovery'>> = o
                     return(
                         <Button
                             key={index}
-                            preset={selectedKeysetId === item ? 'default' : 'secondary'}
+                            preset={selectedKeyset?.id === item.id ? 'default' : 'secondary'}
                             onPress={() => {
-                                setSelectedKeysetId(item)
+                                setSelectedKeyset(item)
                                 setStartIndex(0)
                                 setEndIndex(RESTORE_INDEX_INTERVAL)
                             }}
-                            text={`${item}`}
+                            text={`${item.id} (${item.unit})`}
                             style={{minWidth: scale(80), margin: spacing.extraSmall}}
                             textStyle={$sizeStyles.xxs}
                         />
                     )
                 }}
-                keyExtractor={(item) => item} 
+                keyExtractor={(item) => item.id} 
                 style={{ flexGrow: 0  }}
             />
           }
@@ -932,7 +894,7 @@ const $screen: ViewStyle = {flex: 1}
 const $headerContainer: TextStyle = {
   alignItems: 'center',
   padding: spacing.medium,
-  height: spacing.screenHeight * 0.18,
+  height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {

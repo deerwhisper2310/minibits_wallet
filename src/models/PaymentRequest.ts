@@ -4,6 +4,7 @@ import {withSetPropAction} from './helpers/withSetPropAction'
 import {Contact, ContactModel} from './Contact'
 import {log} from '../services/logService'
 import addSeconds from 'date-fns/addSeconds'
+import { MintUnit, MintUnits } from '../services/wallet/currency'
 
 /**
  * This represents incoming lightning invoice to pay (by transfer tx)
@@ -15,6 +16,9 @@ export enum PaymentRequestStatus {
     EXPIRED = 'EXPIRED',
 }
 
+export enum MintMethod {
+    BOLT11 = 'bolt11',
+}
 
 export enum PaymentRequestType {
     INCOMING = 'INCOMING',
@@ -25,9 +29,14 @@ export const PaymentRequestModel = types
     .model('PaymentRequest', {
         type: types.frozen<PaymentRequestType>(),
         status: types.frozen<PaymentRequestStatus>(),
-        mint: types.maybe(types.string),    
+        mint: types.maybe(types.string),
+        mintQuote: types.maybe(types.string),
+        mintUnit: types.maybe(types.frozen<MintUnit>()), // TODO migration to set default unit for existing PRs
+        mintMethod: types.optional(types.frozen<MintMethod>(), MintMethod.BOLT11), 
+        amountToTopup: types.maybe(types.number),  
         encodedInvoice: types.string,
-        amount: types.number,
+        invoicedAmount: types.number,
+        invoicedUnit: types.optional(types.frozen<MintUnit>(), 'sat'), 
         description: types.optional(types.string, ''),        
         paymentHash: types.string,
         contactFrom: types.frozen<Contact>(),
@@ -49,8 +58,12 @@ export type PaymentRequest = {
     type: PaymentRequestType
     status: PaymentRequestStatus
     mint?: string
+    mintUnit?: MintUnit
+    mintQuote?: string
+    mintMethod?: MintMethod
+    amountToTopup?: number
     encodedInvoice: string
-    amount: number
+    invoicedAmount: number    
     description?: string    
     paymentHash: string
     contactFrom: Contact

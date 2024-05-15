@@ -26,6 +26,9 @@ import Config from './config'
 import {log} from './services'
 import {Env} from './utils/envtypes'
 import AppError from './utils/AppError'
+// RN 0.73 screen rendering issue
+//import { enableFreeze, enableScreens  } from 'react-native-screens';
+// enableScreens(false)
 
 setSizeMattersBaseWidth(375)
 setSizeMattersBaseHeight(812)

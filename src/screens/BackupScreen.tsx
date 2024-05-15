@@ -21,6 +21,7 @@ import AppError from '../utils/AppError'
 import EventEmitter from '../utils/eventEmitter'
 import {ResultModalInfo} from './Wallet/ResultModalInfo'
 import {Database, log, WalletTask, WalletTaskResult} from '../services'
+import { getSnapshot } from 'mobx-state-tree'
 
 export const BackupScreen: FC<SettingsStackScreenProps<'Backup'>> = observer(function BackupScreen(_props) {
     const {navigation} = _props
@@ -39,7 +40,7 @@ export const BackupScreen: FC<SettingsStackScreenProps<'Backup'>> = observer(fun
     const [info, setInfo] = useState('')
     const [isBackupModalVisible, setIsBackupModalVisible] =
       useState<boolean>(false)
-    const [isHandleSpentFromSpendavleSentToQueue, setIsHandleSpentFromSpendavleSentToQueue] = useState<boolean>(false)
+    const [isHandleSpentFromSpendableSentToQueue, setIsHandleSpentFromSpendableSentToQueue] = useState<boolean>(false)
     const [backupResultMessage, setBackupResultMessage] = useState<string>()
     const [totalSpentCount, setTotalSpentCount] = useState<number>(0)
     const [totalSpentAmount, setTotalSpentAmount] = useState<number>(0)
@@ -48,30 +49,31 @@ export const BackupScreen: FC<SettingsStackScreenProps<'Backup'>> = observer(fun
     useEffect(() => {
         const handleSpentByMintTaskResult = async (result: WalletTaskResult) => {
             log.warn('handleSpentByMintTaskResult event handler triggered')
+
+            if(!isHandleSpentFromSpendableSentToQueue) {
+              return false
+            }
             
             setIsLoading(false)            
             // runs per each mint
             if (result && result.spentAmount > 0) {
-                setTotalSpentAmount(totalSpentAmount + result.spentAmount)
-                setTotalSpentCount(totalSpentCount + result.spentCount)
+                setTotalSpentAmount(prev => prev + result.spentAmount)
+                setTotalSpentCount(prev => prev + result.spentCount)
                 setInfo(
-                    `${totalSpentCount} ecash proofs, ${totalSpentAmount} SATS in total were removed from the wallet.`,
+                    `${totalSpentCount} ecash proofs, ${totalSpentAmount} in total were removed from the wallet.`,
                 )
                 return
             }
         
             setInfo('No spent ecash found in your wallet')            
         }
-
-        // Subscribe to the 'sendCompleted' event
+        
         EventEmitter.on('ev__handleSpentByMintTask_result', handleSpentByMintTaskResult)
         
-
-        // Unsubscribe from the 'sendCompleted' event on component unmount
         return () => {
             EventEmitter.off('ev__handleSpentByMintTask_result', handleSpentByMintTaskResult)            
         }
-    }, [isHandleSpentFromSpendavleSentToQueue])
+    }, [isHandleSpentFromSpendableSentToQueue])
 
     const toggleBackupSwitch = () => {
       try {
@@ -79,9 +81,17 @@ export const BackupScreen: FC<SettingsStackScreenProps<'Backup'>> = observer(fun
         const result = userSettingsStore.setIsLocalBackupOn(!isLocalBackupOn)
         setIsLocalBackupOn(result)
 
-        if (result === true) {
-          Database.addOrUpdateProofs(proofsStore.allProofs)
-          Database.addOrUpdateProofs(proofsStore.allPendingProofs, true)
+        if (result === true) { 
+                    
+          log.trace('[toggleBackupSwitch]', JSON.stringify(proofsStore.getBalances()))
+          
+          if(proofsStore.allProofs.length > 0){
+            log.trace('[toggleBackupSwitch]', JSON.stringify(proofsStore.allProofs))
+            Database.addOrUpdateProofs(proofsStore.allProofs)
+          }
+          if(proofsStore.allPendingProofs.length > 0){
+            Database.addOrUpdateProofs(proofsStore.allPendingProofs, true)
+          }
 
           setBackupResultMessage(
             'Your minibits tokens were backed up to local database. New tokens will be backed up automatically.',
@@ -115,16 +125,17 @@ export const BackupScreen: FC<SettingsStackScreenProps<'Backup'>> = observer(fun
 
     const checkSpent = async function () {
       setIsLoading(true)
-      setIsHandleSpentFromSpendavleSentToQueue(true)
+      setIsHandleSpentFromSpendableSentToQueue(true)
       WalletTask.handleSpentFromSpendable()      
     }
 
 
     const increaseCounters = async function () {
         for (const mint of mintsStore.allMints) {
-            mint.increaseProofsCounter(50)
-        }
-  
+          for(const counter of mint.proofsCounters) {
+            mint.increaseProofsCounter(counter.keyset, 50)
+          }            
+        }  
         setInfo('Recovery indexes increased by 50')
     }
 

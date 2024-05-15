@@ -49,7 +49,7 @@ export const UpdateScreen: FC<SettingsStackScreenProps<'Update'>> = observer(fun
             navigation.setParams({isNativeUpdateAvailable: undefined})
             navigation.setParams({updateDescription: undefined})
             navigation.setParams({updateSize: undefined})
-            const routes = navigation.getState()?.routes
+            /* const routes = navigation.getState()?.routes
             let prevRouteName: string = ''
 
             if(routes.length >= 2) {
@@ -63,7 +63,8 @@ export const UpdateScreen: FC<SettingsStackScreenProps<'Update'>> = observer(fun
                     StackActions.replace('Settings')                    
                 )
                 navigation.navigate('WalletNavigator', {screen: 'Wallet'})
-            }   
+            }*/
+            navigation.goBack()   
         },
     })
 
@@ -228,7 +229,7 @@ const $screen: ViewStyle = {}
 const $headerContainer: TextStyle = {
   alignItems: 'center',
   padding: spacing.medium,
-  height: spacing.screenHeight * 0.18,
+  height: spacing.screenHeight * 0.20,
 }
 
 const $buttonContainer: ViewStyle = {

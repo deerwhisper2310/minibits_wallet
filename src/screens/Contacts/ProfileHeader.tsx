@@ -1,4 +1,4 @@
-import formatDistance from "date-fns/formatDistance"
+import { formatDistance } from 'date-fns'
 import { observer } from "mobx-react-lite"
 import React from "react"
 import { Image, TextStyle, View } from "react-native"
@@ -6,6 +6,7 @@ import { Icon, Text } from "../../components"
 import { useStores } from "../../models"
 import { spacing, useThemeColor } from "../../theme"
 import { getImageSource } from '../../utils/utils'
+import { translate } from "../../i18n"
 
 
 export interface ProfileHeaderProps {
@@ -36,7 +37,7 @@ export const ProfileHeader = observer(function (props: ProfileHeaderProps) {
                     color={'white'}                
                 />
             )}
-            <Text preset='bold' text={nip05 || 'Not yet created'} style={{color: 'white', marginBottom: spacing.small}} />          
+            <Text preset='bold' text={nip05 || translate("common.notCreated")} style={{color: 'white', marginBottom: spacing.small}} />          
         </View>
     )
 })
@@ -46,6 +47,6 @@ const $headerContainer: TextStyle = {
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
   

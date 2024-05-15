@@ -1,6 +1,6 @@
 import {observer} from 'mobx-react-lite'
 import React, {FC, useCallback, useEffect, useState} from 'react'
-import {FlatList, TextStyle, View, ViewStyle} from 'react-native'
+import {Alert, FlatList, TextStyle, View, ViewStyle} from 'react-native'
 import {
     APP_ENV,      
     CODEPUSH_STAGING_DEPLOYMENT_KEY,
@@ -16,6 +16,8 @@ import {translate} from '../i18n'
 import { log } from '../services'
 import {Env} from '../utils/envtypes'
 import { round } from '../utils/number'
+import { getCurrency } from '../services/wallet/currency'
+import { getMintColor } from './WalletScreen'
 
 
 interface SettingsScreenProps extends SettingsStackScreenProps<'Settings'> {}
@@ -26,7 +28,7 @@ export const SettingsScreen: FC<SettingsScreenProps> = observer(
   function SettingsScreen(_props) {
     const {navigation} = _props
     useHeader({}) // default header component
-    const {mintsStore, relaysStore} = useStores()
+    const {mintsStore, relaysStore, userSettingsStore} = useStores()
 
     const [isUpdateAvailable, setIsUpdateAvailable] = useState<boolean>(false)
     const [updateDescription, setUpdateDescription] = useState<string>('')    
@@ -53,8 +55,8 @@ export const SettingsScreen: FC<SettingsScreenProps> = observer(
 
 
     const handleBinaryVersionMismatchCallback = function(update: RemotePackage) {            
-        // silent
-        // setIsNativeUpdateAvailable(true)
+      // silent
+      setIsNativeUpdateAvailable(true)
     }
 
     const gotoMints = function() {
@@ -88,6 +90,10 @@ export const SettingsScreen: FC<SettingsScreenProps> = observer(
             updateDescription,
             updateSize
         })
+    }
+
+    const gotoPreferredUnit = function() {
+      Alert.alert('Preferred unit is set based on your Wallet screen.') 
     }
 
     const $itemRight = {color: useThemeColor('textDim')}
@@ -125,9 +131,26 @@ export const SettingsScreen: FC<SettingsScreenProps> = observer(
                     onPress={gotoMints}
                 />
                 <ListItem
+                    tx='settingsScreen.preferredUnit'
+                    leftIcon='faMoneyBill1'
+                    leftIconColor={getMintColor(userSettingsStore.preferredUnit)}
+                    leftIconInverse={true}
+                    style={$item}
+                    RightComponent={
+                      <View style={$rightContainer}>
+                      <Text 
+                          style={$itemRight}
+                          text={getCurrency(userSettingsStore.preferredUnit).code}
+                      />
+                      </View>
+                   }
+                    bottomSeparator={true}
+                    onPress={gotoPreferredUnit}
+                />
+                <ListItem
                     tx='settingsScreen.backupRecovery'
                     leftIcon='faCloudArrowUp'
-                    leftIconColor={colors.palette.success300}
+                    leftIconColor={colors.palette.angry300}
                     leftIconInverse={true}
                     style={$item}
                     bottomSeparator={true}
@@ -171,7 +194,7 @@ export const SettingsScreen: FC<SettingsScreenProps> = observer(
                 <ListItem
                     tx='settingsScreen.devOptions'
                     leftIcon='faCode'
-                    leftIconColor={colors.palette.accent300}
+                    leftIconColor={colors.palette.neutral600}
                     leftIconInverse={true}
                     style={$item}                  
                     onPress={gotoDevOptions}
@@ -214,7 +237,7 @@ const $screen: ViewStyle = {
 const $headerContainer: TextStyle = {
   alignItems: 'center',
   padding: spacing.medium,
-  height: spacing.screenHeight * 0.18,
+  height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {

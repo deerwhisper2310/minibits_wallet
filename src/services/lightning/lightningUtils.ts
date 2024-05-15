@@ -1,9 +1,9 @@
-import {
-  getDecodedLnInvoice,
-} from '@cashu/cashu-ts'
-import AppError, {Err} from '../../utils/AppError'
-import addSeconds from 'date-fns/addSeconds'
+import { decode } from "@gandlaf21/bolt11-decode"
+import AppError, { Err } from '../../utils/AppError'
+import { addSeconds } from 'date-fns'
 import { log } from '../logService'
+import numbro from "numbro"
+import { roundUp, toNumber } from "../../utils/number"
 
 // TODO refactor all this into own module
 
@@ -70,8 +70,8 @@ const extractEncodedLightningInvoice = function (maybeInvoice: string) {
 
 const decodeInvoice = function (encoded: string): DecodedLightningInvoice {
   try {
-    const decoded = getDecodedLnInvoice(encoded)
-    return decoded as DecodedLightningInvoice
+    const decoded: DecodedLightningInvoice = decode(encoded)
+    return decoded
   } catch (e: any) {
     throw new AppError(
       Err.VALIDATION_ERROR,
@@ -101,7 +101,7 @@ const getInvoiceData = function (decoded: DecodedLightningInvoice) {
     for (const item of decoded.sections) {
         switch (item.name) {
             case 'amount':
-                result.amount = parseInt(item.value) / 1000 //sats
+                result.amount = roundUp(toNumber(item.value) / 1000, 0) // round to whole sats
                 break
             case 'description':
                 result.description = (item.value as string) || ''

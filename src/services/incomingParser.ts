@@ -6,10 +6,10 @@ import { colors } from '../theme'
 import AppError, { Err } from '../utils/AppError'
 import { log } from './logService'
 import { CashuUtils } from './cashu/cashuUtils'
-import { MintClient, MintKeys } from './cashuMintClient'
 import { LightningUtils } from './lightning/lightningUtils'
 import { LnurlUtils } from './lnurl/lnurlUtils'
 import { LnurlClient } from './lnurlService'
+import { MintUnit } from './wallet/currency'
 
 export enum IncomingDataType {
     CASHU = 'CASHU',
@@ -135,19 +135,25 @@ const navigateWithIncomingData = async function (
         type: IncomingDataType, 
         encoded: any
     }, 
-    navigation: StackNavigationProp<any>
+    navigation: StackNavigationProp<any>,
+    unit: MintUnit,
+    mintUrl?: string
 ) {
 
     switch (incoming.type) {
         case IncomingDataType.CASHU:
             return navigation.navigate('Receive', {
                 encodedToken: incoming.encoded,
+                unit,
+                mintUrl
             })
 
         case IncomingDataType.INVOICE:
             return navigation.navigate('Transfer', {
                 encodedInvoice: incoming.encoded,
-                paymentOption: SendOption.PASTE_OR_SCAN_INVOICE
+                paymentOption: SendOption.PASTE_OR_SCAN_INVOICE,
+                unit,
+                mintUrl
             })
 
         case (IncomingDataType.LNURL):
@@ -158,14 +164,18 @@ const navigateWithIncomingData = async function (
                 if(lnurlParams.tag === 'withdrawRequest') {                
                     return navigation.navigate('Topup', {
                         lnurlParams,
-                        paymentOption: ReceiveOption.LNURL_WITHDRAW
+                        paymentOption: ReceiveOption.LNURL_WITHDRAW,
+                        unit,
+                        mintUrl
                     })
                 }
 
                 if(lnurlParams.tag === 'payRequest') {
                     return navigation.navigate('Transfer', {
                         lnurlParams,                    
-                        paymentOption: SendOption.LNURL_PAY
+                        paymentOption: SendOption.LNURL_PAY,
+                        unit,
+                        mintUrl
                     })
                 }
 
@@ -183,7 +193,9 @@ const navigateWithIncomingData = async function (
 
                 return navigation.navigate('Transfer', {
                     lnurlParams: addressParamsResult.lnurlParams,                
-                    paymentOption: SendOption.LNURL_PAY
+                    paymentOption: SendOption.LNURL_PAY,
+                    unit,
+                    mintUrl
                 })
             } catch (e: any) {
                 throw new AppError(Err.SERVER_ERROR, 'Could not get Lightning address details from the server.', {

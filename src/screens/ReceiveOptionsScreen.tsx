@@ -1,8 +1,6 @@
 import {observer} from 'mobx-react-lite'
-import React, {FC, useState, useCallback, useEffect} from 'react'
-import {useFocusEffect} from '@react-navigation/native'
-import {Alert, TextStyle, View, ViewStyle} from 'react-native'
-import Clipboard from '@react-native-clipboard/clipboard'
+import React, {FC, useState} from 'react'
+import {TextStyle, View, ViewStyle} from 'react-native'
 import { SvgXml } from 'react-native-svg'
 import {spacing, useThemeColor, colors} from '../theme'
 import {WalletStackScreenProps} from '../navigation'
@@ -21,6 +19,7 @@ import AppError from '../utils/AppError'
 import useIsInternetReachable from '../utils/useIsInternetReachable'
 
 export enum ReceiveOption {
+    // CREATE_AND_SEND_PAYMENT_REQUEST = 'CREATE_AND_SEND_PAYMENT_REQUEST',
     SEND_PAYMENT_REQUEST = 'SEND_PAYMENT_REQUEST',
     PASTE_OR_SCAN_TOKEN = 'PASTE_OR_SCAN_TOKEN',
     SHOW_INVOICE = 'SHOW_INVOICE',
@@ -43,7 +42,10 @@ export const ReceiveOptionsScreen: FC<WalletStackScreenProps<'ReceiveOptions'>> 
     const gotoContacts = function () {
         navigation.navigate('ContactsNavigator', {
             screen: 'Contacts', 
-            params: {paymentOption: ReceiveOption.SEND_PAYMENT_REQUEST}})
+            params: {
+              paymentOption: ReceiveOption.SEND_PAYMENT_REQUEST
+            }
+        })
     }
 
 
@@ -146,7 +148,7 @@ const $screen: ViewStyle = {
 const $headerContainer: TextStyle = {
   alignItems: 'center',
   padding: spacing.medium,
-  height: spacing.screenHeight * 0.18,
+  height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {

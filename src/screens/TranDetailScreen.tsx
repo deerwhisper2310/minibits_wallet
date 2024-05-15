@@ -1,5 +1,5 @@
 import {observer} from 'mobx-react-lite'
-import React, {FC, useEffect, useRef, useState} from 'react'
+import React, {FC, useCallback, useEffect, useRef, useState} from 'react'
 import {
   Alert,
   TextInput,
@@ -10,7 +10,7 @@ import {
 import Clipboard from '@react-native-clipboard/clipboard'
 import JSONTree from 'react-native-json-tree'
 import {colors, spacing, useThemeColor} from '../theme'
-import {WalletStackScreenProps} from '../navigation'
+import {TransactionsStackScreenProps, WalletStackScreenProps} from '../navigation'
 import EventEmitter from '../utils/eventEmitter'
 import {
   Button,
@@ -23,6 +23,7 @@ import {
   BottomModal,
   InfoModal,
   Loading,
+  Header,
 } from '../components'
 import {useHeader} from '../utils/useHeader'
 import {useStores} from '../models'
@@ -41,14 +42,18 @@ import useColorScheme from '../theme/useThemeColor'
 import useIsInternetReachable from '../utils/useIsInternetReachable'
 import { ResultModalInfo } from './Wallet/ResultModalInfo'
 import QRCode from 'react-native-qrcode-svg'
-import { getDecodedToken, getEncodedToken, Token as CashuToken } from '@cashu/cashu-ts'
+import { getDecodedToken, Token as CashuToken } from '@cashu/cashu-ts'
 import { CashuUtils } from '../services/cashu/cashuUtils'
 import { MintStatus } from '../models/Mint'
 import { moderateVerticalScale } from '@gocodingnow/rn-size-matters'
-import { CurrencyCode, CurrencySign } from './Wallet/CurrencySign'
+import { CurrencySign } from './Wallet/CurrencySign'
+import { MintUnit, formatCurrency, getCurrency } from "../services/wallet/currency"
 import { Token } from '../models/Token'
 import { PaymentRequest } from '../models/PaymentRequest'
 import { pollerExists } from '../utils/poller'
+import { StackActions, useFocusEffect } from '@react-navigation/native'
+import { CurrencyAmount } from './Wallet/CurrencyAmount'
+import { toNumber } from '../utils/number'
 
 type ProofsByStatus = {
   isSpent: Proof[]
@@ -56,20 +61,10 @@ type ProofsByStatus = {
   isReceived: Proof[]
 }
 
-export const TranDetailScreen: FC<WalletStackScreenProps<'TranDetail'>> =
+export const TranDetailScreen: FC<TransactionsStackScreenProps<'TranDetail'>> =
   observer(function TranDetailScreen(_props) {
     const {navigation, route} = _props
     const {transactionsStore, userSettingsStore} = useStores()
-    useHeader({
-      leftIcon: 'faArrowLeft',
-      onLeftPress: () => navigation.goBack(),
-      TitleActionComponent:                     
-        <CurrencySign 
-            currencyCode={CurrencyCode.SATS}
-            // containerStyle={{}}
-            textStyle={{color: 'white'}}              
-        />
-    })
     
     const noteInputRef = useRef<TextInput>(null)
 
@@ -84,10 +79,11 @@ export const TranDetailScreen: FC<WalletStackScreenProps<'TranDetail'>> =
     const [note, setNote] = useState<string>('')
     const [savedNote, setSavedNote] = useState<string>('')
 
-    useEffect(() => {
+    useFocusEffect(useCallback(() => {
       try {
-        const {id} = route.params
+        const {id} = route.params        
         const tx = transactionsStore.findById(id)
+        log.trace('Transaction loaded', {id: tx?.id, unit: tx?.unit})
 
       if (!tx) {
           throw new AppError(
@@ -107,7 +103,7 @@ export const TranDetailScreen: FC<WalletStackScreenProps<'TranDetail'>> =
       } catch (e: any) {
         handleError(e)
       }
-    }, [])
+    }, [route]))
 
     useEffect(() => {
       try {
@@ -225,40 +221,47 @@ export const TranDetailScreen: FC<WalletStackScreenProps<'TranDetail'>> =
 
 
 
-  const getFormattedAmount = function(amount: number): string {
+  const getFormattedAmount = function(): string {
       if (!transaction) {
         return ''
       }
 
       switch (transaction?.type) {
         case TransactionType.RECEIVE || TransactionType.RECEIVE_OFFLINE:
-          return `+${transaction.amount.toLocaleString()}`
+          return `+${formatCurrency(transaction.amount, getCurrency(transaction.unit).code)}`
         case TransactionType.SEND:
-          return `-${transaction.amount.toLocaleString()}`
+          return `-${formatCurrency(transaction.amount, getCurrency(transaction.unit).code)}`
         case TransactionType.TOPUP:
-          return `+${transaction.amount.toLocaleString()}`
+          return `+${formatCurrency(transaction.amount, getCurrency(transaction.unit).code)}`
         case TransactionType.TRANSFER:
-          return `-${transaction.amount.toLocaleString()}`
+          return `-${formatCurrency(transaction.amount, getCurrency(transaction.unit).code)}`
         default:
-          return `${transaction?.amount.toLocaleString()}`
+          return `${formatCurrency(transaction.amount, getCurrency(transaction.unit).code)}`
       }
     }
-
-    const feeColor = colors.palette.primary200
-    const colorScheme = useColorScheme()
+    
+  const colorScheme = useColorScheme()
 
   return (
-      <Screen contentContainerStyle={$screen} preset="auto">
+      <Screen contentContainerStyle={$screen} preset="auto">        
         {transaction && (
           <>
-            <View style={[$headerContainer, {backgroundColor: headerBg}]}>
-              {transaction && (
-                <Text
-                    preset="heading"
-                    text={getFormattedAmount(transaction.amount)}
-                    style={$tranAmount}
-                />
-              )}
+            <Header 
+                  leftIcon='faArrowLeft'
+                  onLeftPress={() => navigation.goBack()}
+                  TitleActionComponent={
+                      <CurrencySign 
+                        mintUnit={transaction.unit}
+                        textStyle={{color: 'white'}}              
+                      />
+                  }                    
+            />
+            <View style={[$headerContainer, {backgroundColor: headerBg}]}>              
+              <Text
+                  preset="heading"
+                  text={getFormattedAmount()}
+                  style={$tranAmount}
+              />              
             </View>
             <View style={$contentContainer}>
               <Card
@@ -535,7 +538,9 @@ const ReceiveInfoBlock = function (props: {
                 <>
                     <TranItem
                         label="tranDetailScreen.amount"
-                        value={`${transaction.amount}`}
+                        value={transaction.amount}
+                        unit={transaction.unit}
+                        isCurrency={true}
                         isFirst={true}
                     />
                     <TranItem
@@ -575,7 +580,9 @@ const ReceiveInfoBlock = function (props: {
                     {transaction.status === TransactionStatus.COMPLETED && (
                     <TranItem
                         label="tranDetailScreen.balanceAfter"
-                        value={`${transaction.balanceAfter}`}
+                        value={transaction.balanceAfter || 0}
+                        unit={transaction.unit}
+                        isCurrency={true}
                     />
                     )}
                     <TranItem
@@ -763,7 +770,9 @@ const ReceiveOfflineInfoBlock = function (props: {
                         style={{flexDirection: 'row', justifyContent: 'space-between'}}>
                         <TranItem
                             label="tranDetailScreen.amount"
-                            value={`${transaction.amount}`}
+                            value={transaction.amount}
+                            unit={transaction.unit}
+                            isCurrency={true}
                             isFirst={true}
                         />
                         {isInternetReachable ? (
@@ -807,7 +816,9 @@ const ReceiveOfflineInfoBlock = function (props: {
                     {transaction.status === TransactionStatus.COMPLETED && (
                         <TranItem
                             label="tranDetailScreen.balanceAfter"
-                            value={`${transaction.balanceAfter}`}
+                            value={transaction.balanceAfter || 0}
+                            unit={transaction.unit}
+                            isCurrency={true}
                         />
                     )}
                     <TranItem
@@ -933,7 +944,9 @@ const SendInfoBlock = function (props: {
                     <>
                         <TranItem
                             label="tranDetailScreen.amount"
-                            value={`${transaction.amount}`}
+                            value={transaction.amount}
+                            unit={transaction.unit}
+                            isCurrency={true}
                             isFirst={true}
                         />
                         <TranItem
@@ -958,24 +971,26 @@ const SendInfoBlock = function (props: {
                                 value={transaction.status as string}
                             />
                             <Button
-                                style={{maxHeight: 10, marginTop: spacing.medium}}
+                                style={{marginVertical: spacing.small}}
                                 preset="secondary"
                                 tx="tranDetailScreen.revert"
                                 onPress={() =>
-                                Alert.alert('Not yet implemented. Copy the token instead.')
+                                  Alert.alert('Not yet implemented. Copy the token instead.')
                                 }
                             />
                             </View>
                         ) : (
                             <TranItem
-                            label="tranDetailScreen.status"
-                            value={transaction.status as string}
+                              label="tranDetailScreen.status"
+                              value={transaction.status as string}
                             />
                         )}
                         {transaction.status !== TransactionStatus.ERROR && (
                             <TranItem
-                            label="tranDetailScreen.balanceAfter"
-                            value={`${transaction.balanceAfter}`}
+                              label="tranDetailScreen.balanceAfter"
+                              value={transaction.balanceAfter || 0}
+                              unit={transaction.unit}
+                              isCurrency={true}
                             />
                         )}
                         <TranItem
@@ -988,14 +1003,12 @@ const SendInfoBlock = function (props: {
             />
             <Card
                 style={$dataCard}
-                ContentComponent={
-                    <>                        
+                ContentComponent={                                       
                     <TranItem
                         label="tranDetailScreen.sentFrom"
                         value={transaction.mint as string}
                     />
-                    </>
-                }
+                }                    
             />
             {isDataParsable && (
             <>
@@ -1176,7 +1189,9 @@ const TopupInfoBlock = function (props: {
                 <>
                     <TranItem
                         label="tranDetailScreen.amount"
-                        value={`${transaction.amount}`}
+                        value={transaction.amount}
+                        unit={transaction.unit}
+                        isCurrency={true}
                         isFirst={true}
                     />
                     <TranItem
@@ -1216,7 +1231,9 @@ const TopupInfoBlock = function (props: {
                     {transaction.status === TransactionStatus.COMPLETED && (
                         <TranItem
                             label="tranDetailScreen.balanceAfter"
-                            value={`${transaction.balanceAfter}`}
+                            value={transaction.balanceAfter || 0}
+                            unit={transaction.unit}
+                            isCurrency={true}
                         />
                         )}
                     <TranItem
@@ -1403,7 +1420,9 @@ const TransferInfoBlock = function (props: {
           <>
             <TranItem
               label="tranDetailScreen.amount"
-              value={`${transaction.amount}`}
+              value={transaction.amount}
+              unit={transaction.unit}
+              isCurrency={true}
               isFirst={true}
             />
             <TranItem
@@ -1418,7 +1437,7 @@ const TransferInfoBlock = function (props: {
             )}
             {transaction.sentTo && (
                 <TranItem
-                    label="tranDetailScreen.sentTo"
+                    label="tranDetailScreen.trasferredTo"
                     value={transaction.sentTo as string}
                 />
             )}
@@ -1432,10 +1451,12 @@ const TransferInfoBlock = function (props: {
             />
 
             {transaction.status !== TransactionStatus.ERROR && (
-              <TranItem
-                label="tranDetailScreen.balanceAfter"
-                value={`${transaction.balanceAfter}`}
-              />
+                <TranItem
+                    label="tranDetailScreen.balanceAfter"
+                    value={transaction.balanceAfter || 0}
+                    unit={transaction.unit}
+                    isCurrency={true}
+                />
             )}
 
             <TranItem
@@ -1498,24 +1519,31 @@ const TransferInfoBlock = function (props: {
   )
 }
 
-const TranItem = function (props: {
+export const TranItem = function (props: {
     label: TxKeyPath
-    value: string
+    value: string | number
+    unit?: MintUnit
     labelStyle?: TextStyle
     valueStyle?: TextStyle 
     isFirst?: boolean
     isLast?: boolean
+    isCurrency?: boolean
 }) {
 
     const labelColor = useThemeColor('textDim')
     const margin = !props.isFirst ? {marginTop: spacing.small} : null
+
     return (
         <View>
             <Text
                 style={[props.labelStyle, {color: labelColor, fontSize: 14}, margin]}
                 tx={props.label}
             />
-            <Text style={props.valueStyle || {}} text={props.value} />
+            {props.isCurrency && props.unit ? (
+              <Text style={props.valueStyle || {}} text={`${formatCurrency(props.value as number, getCurrency(props.unit).code)} ${getCurrency(props.unit).code}`} />            
+            ) : (
+              <Text style={props.valueStyle || {}} text={props.value as string} />
+            )}            
         </View>
     )
 }
@@ -1668,10 +1696,11 @@ const $screen: ViewStyle = {}
 const $headerContainer: TextStyle = {
     alignItems: 'center',
     paddingBottom: spacing.medium,
-    height: spacing.screenHeight * 0.18,
+    height: spacing.screenHeight * 0.20,
 }
 
 const $contentContainer: TextStyle = {
+    // flex: 1,
     padding: spacing.extraSmall,
 }
 
